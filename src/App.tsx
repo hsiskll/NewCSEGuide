@@ -21,6 +21,7 @@ import ChapterLibraryTab from './components/ChapterLibraryTab';
 import ChapterReaderTab from './components/ChapterReaderTab';
 import LeitnerRevisionTab from './components/LeitnerRevisionTab';
 import SettingsTab from './components/SettingsTab';
+import FloatingAskAI from './components/FloatingAskAI';
 
 const LOCAL_STORAGE_KEY = 'cseguide_state_v1';
 
@@ -666,6 +667,7 @@ export default function App() {
             }}
             zenMode={zenMode}
             onToggleZenMode={() => setZenMode(!zenMode)}
+            preferences={state.settings?.preferences}
           />
         )}
 
@@ -704,6 +706,7 @@ export default function App() {
         )}
 
       </main>
+      <FloatingAskAI />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, Menu, ZoomIn, ZoomOut,
   Sliders, Award, RefreshCw, Layers, CheckCircle2,
   BookMarked, HelpCircle, FileText, Compass, Clock,
-  ArrowLeft, BrainCircuit, PenTool, Globe, ChevronDown, ChevronUp, Eye, EyeOff
+  ArrowLeft, BrainCircuit, PenTool, Globe, ChevronDown, ChevronUp, Eye, EyeOff, Upload
 } from 'lucide-react';
 import { Chapter, Topic, PYQQuestion, TopicProgress, MCQItem, ThemeKey } from '../types';
 import { callGemini, generateMCQDrill } from '../utils/gemini';
@@ -131,6 +131,8 @@ export default function ChapterReaderTab({
   const [mainsText, setMainsText] = useState('');
   const [mainsEvaluation, setMainsEvaluation] = useState('');
   const [mainsLoading, setMainsLoading] = useState(false);
+  const [mainsAttachment, setMainsAttachment] = useState<{ name: string; mimeType: string; data: string } | null>(null);
+  const [mainsAttachmentError, setMainsAttachmentError] = useState<string>('');
 
   // 8. Current Affairs
   const [caUpdates, setCaUpdates] = useState<string>('');
@@ -171,6 +173,8 @@ export default function ChapterReaderTab({
     setFeynmanFeedback('');
     setMainsText('');
     setMainsEvaluation('');
+    setMainsAttachment(null);
+    setMainsAttachmentError('');
     setSelectionText('');
     setGeneratedMCQs([]);
     setMcqAnswers({});
@@ -314,15 +318,56 @@ export default function ChapterReaderTab({
     setSocraticLoading(false);
   };
 
+  // Mains Attachment File Handler
+  const handleMainsFileChange = (file: File) => {
+    setMainsAttachmentError('');
+    if (file.size > 8 * 1024 * 1024) {
+      setMainsAttachmentError("File size must be under 8MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      if (result) {
+        const commaIdx = result.indexOf(',');
+        const base64Data = commaIdx !== -1 ? result.substring(commaIdx + 1) : result;
+        setMainsAttachment({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          data: base64Data
+        });
+      }
+    };
+    reader.onerror = () => {
+      setMainsAttachmentError("Failed to read file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Mains evaluator
   const evaluateMainsAnswer = async () => {
-    if (!mainsText.trim()) return;
+    if (!mainsText.trim() && !mainsAttachment) return;
     setMainsLoading(true);
     const question = currentTopic.mains_questions?.[0]?.question || `Discuss the constitutional challenges associated with ${currentTopic.title}.`;
-    const prompt = `You are an official UPSC CSE Mains evaluator grading General Studies answers. Evaluate the student's handwritten draft answer below.\n\nQuestion: "${question}"\n\nStudent's Draft:\n"${mainsText}"\n\nEvaluate using official UPSC evaluation criteria. Provide a structured review covering:\n1. INTRODUCTION SCORE (out of 2 marks. Did they define the context, quote articles?)\n2. BODY SCORE (out of 6 marks. Did they address the core directive, list points, quote SC judgments/cases, use sideheadings?)\n3. CONCLUSION SCORE (out of 2 marks. Progressive way forward?)\n4. STRATEGIC FEEDBACK (Specify 2 high-yield value addition points, e.g., a relevant Supreme Court case, Commission report, or data to instantly boost marks).\n\nFormat your evaluation in clean Markdown.`;
-    const res = await callGemini(prompt);
-    setMainsEvaluation(res);
-    setMainsLoading(false);
+    
+    let prompt = `You are an official UPSC CSE Mains evaluator grading General Studies answers. Evaluate the student's draft answer below.`;
+    
+    if (mainsAttachment) {
+      prompt = `You are an official UPSC CSE Mains evaluator grading General Studies answers. 
+An image or PDF containing the handwritten answer draft is attached to this request. Analyze it in detail, read and extract the text from the document, and evaluate it under the official rubrics.`;
+    }
+
+    prompt += `\n\nQuestion: "${question}"\n\nStudent's Typewritten Answer (if any):\n"${mainsText}"\n\nEvaluate using official UPSC evaluation criteria. Provide a structured, highly detailed, and beautifully presented review covering:\n1. INTRODUCTION SCORE (out of 2 marks. Did they define the context, quote articles?)\n2. BODY SCORE (out of 6 marks. Did they address the core directive, list points, quote SC judgments/cases, use sideheadings?)\n3. CONCLUSION SCORE (out of 2 marks. Progressive way forward?)\n4. STRATEGIC FEEDBACK (Specify 2 high-yield value addition points, e.g., a relevant Supreme Court case, Commission report, or data to instantly boost marks).\n\nFormat your evaluation in clean Markdown. Use subheadings, bullet points, and key bold elements for a premium aesthetic.`;
+    
+    try {
+      const res = await callGemini(prompt, 'gemini-3.5-flash', mainsAttachment || undefined);
+      setMainsEvaluation(res);
+    } catch (err: any) {
+      setMainsEvaluation(`Evaluation failed: ${err.message || err}`);
+    } finally {
+      setMainsLoading(false);
+    }
   };
 
   // Sync Current Affairs with Gemini
@@ -575,7 +620,14 @@ export default function ChapterReaderTab({
         </div>
 
         {/* 3. Panel Switcher (Main Scroll Area) */}
-        <div className="flex-1 overflow-y-auto relative p-6 font-serif">
+        <div 
+          className="flex-1 overflow-y-auto relative p-6"
+          style={{ 
+            fontSize: `${fontSize}px`, 
+            fontFamily: fontFamily === 'mono' ? 'var(--font-mono)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)',
+            lineHeight: lineSpacing 
+          }}
+        >
           
           {/* Tab Panel 1: Read */}
           {activeTab === 'read' && (
@@ -648,7 +700,6 @@ export default function ChapterReaderTab({
               <div 
                 onMouseUp={handleTextSelection}
                 className="prose prose-invert max-w-none text-[var(--t1)] font-serif select-text hover:cursor-text"
-                style={{ fontSize: `${fontSize}px`, lineHeight: lineSpacing }}
               >
                 {/* Intro background if first topic */}
                 {activeTopicIdx === 0 && chapter.chapter_intro && (
@@ -1293,9 +1344,9 @@ export default function ChapterReaderTab({
                   )}
 
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] uppercase font-bold text-[var(--t3)]">Input Draft Answer (250 Words limit)</label>
+                    <label className="block text-[10px] uppercase font-bold text-[var(--t3)]">Input Draft Answer (Optional if attaching image/PDF)</label>
                     <textarea
-                      rows={6}
+                      rows={5}
                       placeholder="Compose your structured essay-style answer. State definitions, body headings, subpoints, and balanced final summary..."
                       className="w-full bg-[var(--sur)] border border-[var(--bd)] text-[var(--t1)] rounded-2xl p-4 text-xs font-serif focus:outline-none focus:ring-1 focus:ring-[var(--gd)] leading-relaxed"
                       value={mainsText}
@@ -1303,9 +1354,69 @@ export default function ChapterReaderTab({
                     />
                   </div>
 
+                  {/* File attachment component */}
+                  <div className="space-y-2">
+                    <label className="block text-[10px] uppercase font-bold text-[var(--t3)]">
+                      Attach handwritten answer draft (Image/PDF)
+                    </label>
+                    
+                    <div 
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                          handleMainsFileChange(e.dataTransfer.files[0]);
+                        }
+                      }}
+                      className="border border-dashed border-[var(--bd)] hover:border-[var(--gd)] rounded-2xl p-4 flex flex-col items-center justify-center text-center space-y-2 bg-[var(--sur)]/40 transition cursor-pointer"
+                    >
+                      <Upload className="w-5 h-5 text-[var(--gd)] animate-pulse" />
+                      <div className="text-[11px] text-[var(--t2)] font-serif">
+                        <p className="font-bold text-[var(--t1)]">Drag and Drop your draft here</p>
+                        <p>Supports jpeg, png, webp, or pdf files up to 8MB</p>
+                      </div>
+                      
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={(e) => e.target.files && e.target.files[0] && handleMainsFileChange(e.target.files[0])}
+                        className="hidden"
+                        id="mains_attachment_input"
+                      />
+                      <label
+                        htmlFor="mains_attachment_input"
+                        className="bg-[var(--ra)] border border-[var(--bd)] hover:border-[var(--gd)] text-[var(--t1)] hover:text-[var(--gd)] text-[9px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-xl cursor-pointer transition"
+                      >
+                        Browse Document
+                      </label>
+                    </div>
+
+                    {mainsAttachmentError && (
+                      <p className="text-[10px] text-[var(--er)] font-semibold mt-1">⚠️ {mainsAttachmentError}</p>
+                    )}
+
+                    {mainsAttachment && (
+                      <div className="bg-[var(--ra)] border border-[var(--gd)]/30 px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-xs font-serif text-[var(--t1)] animate-fade-in">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <span className="text-[10px] font-mono bg-[var(--gd)]/20 text-[var(--gd)] px-1.5 py-0.5 rounded shrink-0 uppercase">
+                            {mainsAttachment.mimeType.split('/')[1] || 'doc'}
+                          </span>
+                          <span className="truncate font-semibold text-[11px]">{mainsAttachment.name}</span>
+                        </div>
+                        <button
+                          onClick={() => setMainsAttachment(null)}
+                          className="text-[var(--t3)] hover:text-[var(--er)] p-1 transition"
+                          title="Remove document"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={evaluateMainsAnswer}
-                    disabled={mainsLoading || !mainsText.trim()}
+                    disabled={mainsLoading || (!mainsText.trim() && !mainsAttachment)}
                     className="bg-[var(--gd)] text-[var(--bg)] px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition flex items-center gap-1.5"
                   >
                     {mainsLoading ? (

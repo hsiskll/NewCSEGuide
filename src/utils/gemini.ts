@@ -305,14 +305,34 @@ export async function generateCAClassifier(textSection: string): Promise<CAClass
   }
 }
 
-// 8. General-purpose Gemini caller for chat & custom prompts
-export async function callGemini(prompt: string, modelId: string = 'gemini-3.5-flash'): Promise<string> {
+// 8. General-purpose Gemini caller for chat & custom prompts with optional attachment support
+export async function callGemini(
+  prompt: string, 
+  modelId: string = 'gemini-3.5-flash',
+  attachment?: { mimeType: string; data: string }
+): Promise<string> {
   try {
     const ai = getGeminiClient();
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-    });
+    let response;
+    
+    if (attachment) {
+      const part = {
+        inlineData: {
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+        },
+      };
+      response = await ai.models.generateContent({
+        model: modelId,
+        contents: [part, prompt],
+      });
+    } else {
+      response = await ai.models.generateContent({
+        model: modelId,
+        contents: prompt,
+      });
+    }
+    
     return response.text || 'No response generated.';
   } catch (error: any) {
     console.error('Gemini call failed:', error);
