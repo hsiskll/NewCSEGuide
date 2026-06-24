@@ -1,0 +1,6 @@
+{
+  "name": "CSEGuide",
+  "description": "A personal UPSC CSE (Indian Civil Services) smart reader and study companion with direct Gemini AI features, spaced-repetition revision, and PWA offline capability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
