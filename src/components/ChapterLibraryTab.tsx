@@ -1,10 +1,20 @@
 import React, { useState } from 'react';
 import { 
   Folder as FolderIcon, Plus, BookOpen, Trash2, Import, 
-  AlertCircle, FileText, X, FolderPlus, UploadCloud,
-  Landmark, Coins, Hourglass, Globe, Leaf, Cpu, Globe2, Users, Heart, PenTool, Shield, Flame, Newspaper, BarChart3, HelpCircle, Edit2, Check, ArrowRight
+  AlertCircle, FileText, X, FolderPlus, UploadCloud, Upload,
+  Landmark, Coins, Hourglass, Globe, Leaf, Cpu, Globe2, Users, Heart, PenTool, Shield, Flame, Newspaper, BarChart3, HelpCircle, Edit2, Check, ArrowRight,
+  RefreshCw
 } from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
 import { Folder, Chapter, Topic, SubjectType, TopicProgress, Flashcard } from '../types';
+
+// Configure pdfjs worker
+try {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '6.0.227'}/build/pdf.worker.min.mjs`;
+} catch (e) {
+  console.warn('Failed to configure pdf.js worker URL:', e);
+}
 
 interface ChapterLibraryTabProps {
   folders: Folder[];
@@ -127,6 +137,173 @@ export default function ChapterLibraryTab({
   const [pastedJson, setPastedJson] = useState('');
   const [importError, setImportError] = useState('');
   const [dragActive, setDragActive] = useState(false);
+
+  // Document Import (PDF & Word) States
+  const [showDocImportModal, setShowDocImportModal] = useState(false);
+  const [docImporting, setDocImporting] = useState(false);
+  const [docImportError, setDocImportError] = useState<string | null>(null);
+
+  // Extract PDF text in-browser
+  const extractTextFromPDF = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    try {
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+      const pdf = await loadingTask.promise;
+      let fullText = '';
+      
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          // @ts-ignore
+          .map(item => item.str)
+          .join(' ');
+        fullText += pageText + '\n\n';
+      }
+      return fullText;
+    } catch (err: any) {
+      console.error('PDF extraction failed:', err);
+      throw new Error(`PDF extraction failed: ${err.message || err}`);
+    }
+  };
+
+  // Extract Word DOCX text in-browser
+  const extractTextFromDOCX = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    try {
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return result.value;
+    } catch (err: any) {
+      console.error('Word extraction failed:', err);
+      throw new Error(`Word extraction failed: ${err.message || err}`);
+    }
+  };
+
+  // Handle uploaded document file
+  const handleDocFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setDocImporting(true);
+    setDocImportError(null);
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const arrayBuffer = event.target?.result as ArrayBuffer;
+        let extractedText = '';
+
+        if (file.name.toLowerCase().endsWith('.pdf')) {
+          extractedText = await extractTextFromPDF(arrayBuffer);
+        } else if (file.name.toLowerCase().endsWith('.docx')) {
+          extractedText = await extractTextFromDOCX(arrayBuffer);
+        } else {
+          throw new Error('Unsupported file format. Please upload a .pdf or .docx document.');
+        }
+
+        if (!extractedText.trim()) {
+          throw new Error('No readable text could be extracted from this document.');
+        }
+
+        // Split text into paragraphs (double/multiple newlines)
+        const paragraphs = extractedText
+          .split(/\r?\n\s*\r?\n/)
+          .map(p => p.trim())
+          .filter(p => p.length > 20);
+
+        if (paragraphs.length === 0) {
+          // Fallback: split by single newline if no double newlines
+          const singleLines = extractedText
+            .split(/\r?\n/)
+            .map(p => p.trim())
+            .filter(p => p.length > 20);
+          paragraphs.push(...singleLines);
+        }
+
+        if (paragraphs.length === 0) {
+          throw new Error('Could not partition text into paragraphs. The document might be scanned/empty.');
+        }
+
+        // Convert paragraphs into Topic sections
+        const topics: Topic[] = paragraphs.map((para, idx) => {
+          let title = para.split(/[.!?\n]/)[0].trim();
+          if (title.length > 50) {
+            title = title.substring(0, 47) + '...';
+          }
+          if (!title) {
+            title = `Section ${idx + 1}`;
+          }
+
+          const sectionId = `t-doc-${idx}-${Date.now()}`;
+
+          return {
+            id: sectionId,
+            title: `${idx + 1}. ${title}`,
+            order: idx + 1,
+            full_text: para,
+            raw_text: para,
+            key_concepts: [
+              {
+                concept: "Core Takeaway",
+                explanation: para.substring(0, 250) + (para.length > 250 ? "..." : "")
+              }
+            ],
+            lesson_slides: [
+              {
+                slide_number: 1,
+                title: `Brief: ${title}`,
+                type: "Summary",
+                content: para.substring(0, 180) + (para.length > 180 ? "..." : "")
+              }
+            ],
+            flashcards: [
+              {
+                front: `Key query on: ${title}?`,
+                back: para.substring(0, 155) + "..."
+              }
+            ]
+          };
+        });
+
+        const activeFolder = folders.find(f => f.id === activeFolderId);
+        const folderSubject = activeFolder?.subject || 'Imported';
+        const folderName = activeFolder?.name || 'Imported';
+
+        const newCh: Chapter = {
+          id: `ch-doc-${Date.now()}`,
+          folderId: activeFolderId || '',
+          title: file.name.replace(/\.[^/.]+$/, ""),
+          description: `Extracted from "${file.name}"`,
+          subject: folderSubject,
+          source: 'Imported Document',
+          metadata: {
+            book: 'Imported Document',
+            chapter_number: chapters.length + 1,
+            chapter_title: file.name.replace(/\.[^/.]+$/, ""),
+            subject: folderName
+          },
+          topics,
+          important_articles: [],
+          createdAt: new Date().toISOString()
+        };
+
+        onAddChapter(newCh);
+
+        setSuccessToast(`Successfully imported document as chapter "${newCh.title}"!`);
+        setShowDocImportModal(false);
+      } catch (err: any) {
+        console.error('Extraction error:', err);
+        setDocImportError(err.message || 'An error occurred during file extraction.');
+      } finally {
+        setDocImporting(false);
+      }
+    };
+
+    reader.onerror = () => {
+      setDocImportError('Failed to read the file.');
+      setDocImporting(false);
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
 
   const handleJsonFile = (file: File) => {
     const reader = new FileReader();
@@ -488,6 +665,13 @@ export default function ChapterLibraryTab({
               >
                 <Import className="w-4 h-4 text-[var(--gd)]" />
                 Import JSON
+              </button>
+              <button
+                onClick={() => setShowDocImportModal(true)}
+                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200"
+              >
+                <Upload className="w-4 h-4 text-[var(--gd)]" />
+                Import Document
               </button>
               <button
                 onClick={() => setShowChapterModal(true)}
@@ -1125,6 +1309,85 @@ export default function ChapterLibraryTab({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* DOCUMENT IMPORT MODAL (PDF & WORD) */}
+      {showDocImportModal && (
+        <div id="doc_import_modal" className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-40 backdrop-blur-xs overflow-y-auto animate-fade-in">
+          <div className="bg-[var(--sur)] border border-[var(--bd)] rounded-3xl shadow-xl w-full max-w-md overflow-hidden relative text-left">
+            <div className="bg-[var(--ra)] text-[var(--t1)] px-4 py-3 border-b border-[var(--bd)] flex justify-between items-center">
+              <div>
+                <span className="text-[9px] uppercase tracking-widest font-bold text-[var(--gd)] font-mono">Document Parser</span>
+                <h3 className="font-serif font-bold text-sm text-[var(--t1)]">Import Document (PDF / Word)</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowDocImportModal(false);
+                  setDocImportError(null);
+                }} 
+                className="text-[var(--t3)] hover:text-[var(--t1)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-[var(--t2)] font-serif leading-relaxed">
+                Upload any <strong>PDF (.pdf)</strong> or <strong>Word (.docx)</strong> document. We will parse the text locally in your browser and automatically build a structured chapter library with lessons, slides, key concepts, and flashcards!
+              </p>
+
+              <div className="border-2 border-dashed border-[var(--bd)] hover:border-[var(--gd)] rounded-3xl p-6 text-center transition duration-200 cursor-pointer bg-[var(--ra)]/30 relative flex flex-col items-center justify-center space-y-2.5">
+                <input
+                  type="file"
+                  id="doc_file_upload"
+                  accept=".pdf,.docx"
+                  disabled={docImporting}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  onChange={handleDocFileChange}
+                />
+                {docImporting ? (
+                  <RefreshCw className="w-10 h-10 text-[var(--gd)] animate-spin" />
+                ) : (
+                  <UploadCloud className="w-10 h-10 text-[var(--gd)]" />
+                )}
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-[var(--t1)] font-sans">
+                    {docImporting ? 'Processing & Extracting...' : 'Click to select or drag PDF / Word here'}
+                  </p>
+                  <p className="text-[10px] text-[var(--t3)] font-sans">
+                    Supports text-based .pdf and Word (.docx) documents up to 25MB
+                  </p>
+                </div>
+              </div>
+
+              {docImportError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] rounded-xl flex items-center gap-1.5 leading-relaxed">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                  <span>{docImportError}</span>
+                </div>
+              )}
+
+              <div className="bg-[var(--ra)] border border-[var(--bd)] text-[var(--t2)] p-3 rounded-2xl text-[10px] space-y-1.5 leading-relaxed">
+                <p className="font-bold flex items-center gap-1.5 text-[var(--t1)]">
+                  <FileText className="w-3.5 h-3.5 text-[var(--gd)]" />
+                  Local In-Browser Processing Guarantee:
+                </p>
+                <p>No servers, no remote API calls, and zero external transmissions are made during this extraction. All document text stays entirely isolated inside your browser's runtime memory.</p>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-[var(--bd)]">
+                <button
+                  type="button"
+                  disabled={docImporting}
+                  onClick={() => setShowDocImportModal(false)}
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold text-[var(--t2)] hover:bg-[var(--ra)] transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

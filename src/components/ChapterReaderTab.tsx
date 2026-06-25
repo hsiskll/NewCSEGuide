@@ -4,10 +4,16 @@ import {
   ChevronLeft, ChevronRight, Menu, ZoomIn, ZoomOut,
   Sliders, Award, RefreshCw, Layers, CheckCircle2,
   BookMarked, HelpCircle, FileText, Compass, Clock,
-  ArrowLeft, BrainCircuit, PenTool, Globe, ChevronDown, ChevronUp, Eye, EyeOff, Upload
+  ArrowLeft, BrainCircuit, PenTool, Globe, ChevronDown, ChevronUp, Eye, EyeOff, Upload,
+  Highlighter, Trash2, X, Undo2
 } from 'lucide-react';
 import { Chapter, Topic, PYQQuestion, TopicProgress, MCQItem, ThemeKey } from '../types';
 import { callGemini, generateMCQDrill } from '../utils/gemini';
+
+interface SavedHighlight {
+  text: string;
+  color: 'yellow' | 'green' | 'pink';
+}
 
 interface ChapterReaderTabProps {
   chapter: Chapter;
@@ -19,6 +25,7 @@ interface ChapterReaderTabProps {
   onSaveProgress: (topicId: string, progress: TopicProgress) => void;
   zenMode?: boolean;
   onToggleZenMode?: () => void;
+  preferences?: any;
 }
 
 const DEFAULT_OFFLINE_MCQS: Record<string, MCQItem[]> = {
@@ -58,6 +65,18 @@ export default function ChapterReaderTab({
   const [fontSize, setFontSize] = useState<number>(18);
   const [lineSpacing, setLineSpacing] = useState<number>(1.6);
 
+  const getTabFontSize = (tab: string, baseSize: number) => {
+    if (tab === 'read') return Math.max(18, baseSize);
+    return Math.max(21, baseSize);
+  };
+
+  // Highlight states
+  const [showHighlights, setShowHighlights] = useState<boolean>(true);
+  const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
+  const [showHighlightPopup, setShowHighlightPopup] = useState(false);
+  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+  const [selectedText, setSelectedText] = useState('');
+
   // Layout states
   const [activeTopicIdx, setActiveTopicIdx] = useState<number>(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -65,6 +84,21 @@ export default function ChapterReaderTab({
   
   // Interactive Topic contents
   const currentTopic: Topic | undefined = (chapter && chapter.topics) ? (chapter.topics[activeTopicIdx] || chapter.topics[0]) : undefined;
+
+  // Sync highlights on mount or topic change
+  useEffect(() => {
+    if (chapter?.id && currentTopic?.id) {
+      try {
+        const saved = localStorage.getItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`);
+        setHighlights(saved ? JSON.parse(saved) : []);
+      } catch (e) {
+        setHighlights([]);
+      }
+    } else {
+      setHighlights([]);
+    }
+    setShowHighlightPopup(false);
+  }, [chapter?.id, currentTopic?.id]);
 
   // Load progress state for current topic
   const topicProgress: TopicProgress = (currentTopic && savedProgress && savedProgress[currentTopic.id]) || {
@@ -133,6 +167,13 @@ export default function ChapterReaderTab({
   const [mainsLoading, setMainsLoading] = useState(false);
   const [mainsAttachment, setMainsAttachment] = useState<{ name: string; mimeType: string; data: string } | null>(null);
   const [mainsAttachmentError, setMainsAttachmentError] = useState<string>('');
+  
+  // Mains evaluator configuration states
+  const [mainsQuestionType, setMainsQuestionType] = useState<'preloaded' | 'manual' | 'generated'>('preloaded');
+  const [customMainsQuestion, setCustomMainsQuestion] = useState('');
+  const [generatedMainsQuestion, setGeneratedMainsQuestion] = useState('');
+  const [generatedMainsSkeleton, setGeneratedMainsSkeleton] = useState<any>(null);
+  const [mainsQuestionLoading, setMainsQuestionLoading] = useState(false);
 
   // 8. Current Affairs
   const [caUpdates, setCaUpdates] = useState<string>('');
@@ -148,15 +189,113 @@ export default function ChapterReaderTab({
     }
   }, [currentTopic?.id]);
 
-  // Capture selection text in read tab
-  const handleTextSelection = () => {
+  // Capture selection text in read tab and handle popup
+  const handleTextSelection = (e: React.MouseEvent) => {
     const sel = window.getSelection();
     if (sel) {
       const text = sel.toString().trim();
-      if (text.length > 10 && text.length < 1500) {
-        setSelectionText(text);
+      if (text.length > 0) {
+        if (text.length > 10 && text.length < 1500) {
+          setSelectionText(text);
+        }
+        setSelectedText(text);
+        
+        const range = sel.getRangeAt(0);
+        const rect = range?.getBoundingClientRect();
+        if (rect) {
+          setPopupPosition({
+            x: rect.left + rect.width / 2,
+            y: rect.top - 10
+          });
+          setShowHighlightPopup(true);
+        }
+      } else {
+        setShowHighlightPopup(false);
       }
+    } else {
+      setShowHighlightPopup(false);
     }
+  };
+
+  const handleSaveHighlight = (color: 'yellow' | 'green' | 'pink') => {
+    if (!selectedText || !chapter?.id || !currentTopic?.id) return;
+
+    const newHighlight: SavedHighlight = {
+      text: selectedText,
+      color
+    };
+
+    const updated = [...highlights, newHighlight];
+    setHighlights(updated);
+    localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+
+    // Clear selection
+    window.getSelection()?.removeAllRanges();
+    setShowHighlightPopup(false);
+    setSelectedText('');
+  };
+
+  const handleClearHighlights = () => {
+    if (!chapter?.id || !currentTopic?.id) return;
+    setHighlights([]);
+    localStorage.removeItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`);
+  };
+
+  const handleUndoLastHighlight = () => {
+    if (!chapter?.id || !currentTopic?.id || highlights.length === 0) return;
+    const updated = highlights.slice(0, -1);
+    setHighlights(updated);
+    localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+  };
+
+  const handleRemoveSpecificHighlight = (textToRemove: string) => {
+    if (!chapter?.id || !currentTopic?.id) return;
+    const updated = highlights.filter(h => h.text.toLowerCase() !== textToRemove.toLowerCase());
+    setHighlights(updated);
+    localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+  };
+
+  // Format paragraph text by wrapping any saved highlighted substrings in <mark>
+  const renderHighlightedText = (text: string) => {
+    if (!showHighlights || !highlights || highlights.length === 0) {
+      return text;
+    }
+
+    // Sort highlights by length descending to match longer strings first
+    const sortedHighlights = [...highlights].sort((a, b) => b.text.length - a.text.length);
+    const escapeRegExp = (str: string) => {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
+
+    const patterns = sortedHighlights
+      .map(h => escapeRegExp(h.text))
+      .filter(p => p.trim().length > 0);
+
+    if (patterns.length === 0) return text;
+
+    const regex = new RegExp(`(${patterns.join('|')})`, 'gi');
+    const parts = text.split(regex);
+
+    return parts.map((part, index) => {
+      const match = sortedHighlights.find(h => h.text.toLowerCase() === part.toLowerCase());
+      if (match) {
+        const colorClass = 
+          match.color === 'green' ? 'bg-emerald-300 text-black' :
+          match.color === 'pink' ? 'bg-pink-300 text-black' :
+          'bg-yellow-200 text-black'; // yellow
+        return (
+          <mark 
+            key={index} 
+            className={`${colorClass} px-0.5 rounded font-serif select-text cursor-pointer hover:opacity-80 transition-all duration-150`}
+            title="Click to remove highlight"
+            onClick={() => handleRemoveSpecificHighlight(part)}
+          >
+            {part}
+          </mark>
+        );
+      }
+      return part;
+    });
   };
 
   // Reset module specific states when topic index changes
@@ -345,11 +484,94 @@ export default function ChapterReaderTab({
     reader.readAsDataURL(file);
   };
 
+  const getActiveMainsQuestionAndSkeleton = () => {
+    const preloadedQ = currentTopic?.mains_questions?.[0];
+    const preloadedText = preloadedQ?.question || `Critically evaluate the democratic authority structures linked with ${currentTopic?.title}.`;
+    const preloadedSkel = preloadedQ?.answer_skeleton || {
+      intro: "Provide a direct conceptual definition and contextual relevance to the current question.",
+      body_points: [
+        "Detail primary structural and theoretical arguments.",
+        "Support with constitutional articles and historical cases.",
+        "Address counter-arguments or critical limitations."
+      ],
+      conclusion: "Summarize with a balanced administrative way forward."
+    };
+
+    if (mainsQuestionType === 'manual') {
+      return {
+        question: customMainsQuestion || "Critically evaluate the legal and structural dimensions of the topic.",
+        skeleton: null
+      };
+    } else if (mainsQuestionType === 'generated') {
+      return {
+        question: generatedMainsQuestion || "No AI question generated yet. Click generate below.",
+        skeleton: generatedMainsSkeleton
+      };
+    } else {
+      return {
+        question: preloadedText,
+        skeleton: preloadedSkel
+      };
+    }
+  };
+
+  const handlePreloadAnswer = () => {
+    const { skeleton } = getActiveMainsQuestionAndSkeleton();
+    if (skeleton) {
+      const preloadedDraft = `[INTRODUCTION]\n${skeleton.intro}\n\n[CORE BODY ARGUMENTS]\n${skeleton.body_points.map((pt, i) => `${i + 1}. ${pt}`).join('\n')}\n\n[CONCLUSION]\n${skeleton.conclusion || "Conclude with a forward-looking balanced administrative stance."}`;
+      setMainsText(preloadedDraft);
+    } else {
+      const templateDraft = `[INTRODUCTION]\n- Define core terms of the custom question...\n\n[BODY POINTS]\n- Argument 1: Citing provisions, acts, or cases...\n- Argument 2: Counter-perspective or critical analysis...\n\n[CONCLUSION]\n- Balanced way forward...`;
+      setMainsText(templateDraft);
+    }
+  };
+
+  const handleGenerateMainsQuestion = async () => {
+    setMainsQuestionLoading(true);
+    try {
+      const prompt = `You are an expert UPSC CSE exam compiler. Generate a realistic General Studies Mains paper question for the topic: "${currentTopic?.title || 'this topic'}".
+      Style the question as a UPSC essay-style prompt (e.g., "Critically analyze...", "Elucidate on...", "Do you agree...").
+      Also, provide a detailed model answer skeleton comprising "intro", "body_points" (as an array of strings), and "conclusion".
+      
+      Return STRICTLY a raw JSON object matching this schema. Do not write markdown blocks or explain yourself outside the JSON:
+      {
+        "question": "The question text",
+        "skeleton": {
+          "intro": "Write introduction guidelines...",
+          "body_points": ["Point 1", "Point 2", "Point 3"],
+          "conclusion": "Write conclusion guidelines..."
+        }
+      }`;
+
+      const resText = await callGemini(prompt);
+      
+      let cleaned = resText.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```json\s*/, '').replace(/```\s*$/, '').trim();
+      }
+      
+      const parsed = JSON.parse(cleaned);
+      if (parsed.question && parsed.skeleton) {
+        setGeneratedMainsQuestion(parsed.question);
+        setGeneratedMainsSkeleton(parsed.skeleton);
+        setMainsQuestionType('generated');
+      } else {
+        throw new Error("Missing question or skeleton keys in returned JSON.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert("Error generating UPSC question: " + (err.message || err));
+    } finally {
+      setMainsQuestionLoading(false);
+    }
+  };
+
   // Mains evaluator
   const evaluateMainsAnswer = async () => {
     if (!mainsText.trim() && !mainsAttachment) return;
     setMainsLoading(true);
-    const question = currentTopic.mains_questions?.[0]?.question || `Discuss the constitutional challenges associated with ${currentTopic.title}.`;
+    const activeQObj = getActiveMainsQuestionAndSkeleton();
+    const question = activeQObj.question;
     
     let prompt = `You are an official UPSC CSE Mains evaluator grading General Studies answers. Evaluate the student's draft answer below.`;
     
@@ -599,9 +821,67 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               </button>
             )}
 
+            {activeTab === 'read' && (
+              <>
+                <button
+                  onClick={() => setShowHighlights(!showHighlights)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-200 border ${
+                    showHighlights 
+                      ? 'bg-[var(--gd)] text-[var(--bg)] border-transparent shadow-md' 
+                      : 'bg-[var(--ra)] border-[var(--bd)] text-[var(--t2)] hover:text-[var(--t1)]'
+                  }`}
+                  title={showHighlights ? "Hide saved highlights for this chapter" : "Show saved highlights for this chapter"}
+                >
+                  <Highlighter className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Highlights</span>
+                </button>
+
+                {highlights.length > 0 && showHighlights && (
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={handleUndoLastHighlight}
+                      className="p-1.5 text-[var(--gd)] hover:text-[var(--gd2)] rounded border border-transparent hover:bg-[var(--ra)]"
+                      title="Undo last highlight"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={handleClearHighlights}
+                      className="p-1.5 text-red-400 hover:text-red-500 rounded border border-transparent hover:bg-[var(--ra)]"
+                      title="Clear all highlights on this topic"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex items-center gap-1 bg-[var(--ra)] rounded-xl p-0.5 border border-[var(--bd)]">
+              {[
+                { label: 'S', size: 18, title: 'Small' },
+                { label: 'M', size: 22, title: 'Medium' },
+                { label: 'L', size: 26, title: 'Large' },
+                { label: 'XL', size: 30, title: 'Extra Large' }
+              ].map(opt => (
+                <button
+                  key={opt.label}
+                  onClick={() => setFontSize(opt.size)}
+                  className={`px-2 py-1 text-[10px] font-bold rounded transition ${
+                    fontSize === opt.size 
+                      ? 'bg-[var(--gd)] text-[var(--bg)]' 
+                      : 'text-[var(--t2)] hover:bg-[var(--sur)] hover:text-[var(--t1)]'
+                  }`}
+                  title={opt.title}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-1.5 bg-[var(--ra)] rounded-xl p-0.5 border border-[var(--bd)]">
               <button 
-                onClick={() => setFontSize(Math.max(14, fontSize - 1))}
+                onClick={() => setFontSize(Math.max(12, fontSize - 1))}
                 className="p-1 hover:bg-[var(--sur)] text-[var(--t2)] hover:text-[var(--t1)] rounded"
                 title="Decrease size"
               >
@@ -609,7 +889,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               </button>
               <span className="text-[10px] font-mono font-bold px-1">{fontSize}px</span>
               <button 
-                onClick={() => setFontSize(Math.min(28, fontSize + 1))}
+                onClick={() => setFontSize(Math.min(32, fontSize + 1))}
                 className="p-1 hover:bg-[var(--sur)] text-[var(--t2)] hover:text-[var(--t1)] rounded"
                 title="Increase size"
               >
@@ -621,9 +901,9 @@ An image or PDF containing the handwritten answer draft is attached to this requ
 
         {/* 3. Panel Switcher (Main Scroll Area) */}
         <div 
-          className="flex-1 overflow-y-auto relative p-6"
+          className="flex-1 overflow-y-auto relative p-6 font-size-adjustable-container"
           style={{ 
-            fontSize: `${fontSize}px`, 
+            fontSize: `${getTabFontSize(activeTab, fontSize)}px`, 
             fontFamily: fontFamily === 'mono' ? 'var(--font-mono)' : fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)',
             lineHeight: lineSpacing 
           }}
@@ -700,24 +980,25 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               <div 
                 onMouseUp={handleTextSelection}
                 className="prose prose-invert max-w-none text-[var(--t1)] font-serif select-text hover:cursor-text"
+                style={{ fontSize: `${fontSize}px` }}
               >
                 {/* Intro background if first topic */}
                 {activeTopicIdx === 0 && chapter.chapter_intro && (
                   <div className="bg-[var(--ra)] border border-[var(--bd)] rounded-2xl p-5 mb-6 text-left relative overflow-hidden">
                     <h3 className="text-xs uppercase font-mono text-[var(--gd)] mb-1 font-sans font-bold">Chapter Background</h3>
-                    <p className="italic text-[var(--t2)] font-serif m-0">{chapter.chapter_intro}</p>
+                    <p className="italic text-[var(--t2)] font-serif m-0" style={{ fontSize: `${fontSize}px` }}>{chapter.chapter_intro}</p>
                   </div>
                 )}
 
                 {/* Main section body */}
                 {currentTopic.full_text ? (
                   currentTopic.full_text.split('\n\n').map((para, pIdx) => (
-                    <p key={pIdx} className="mb-4 text-justify leading-relaxed text-[var(--t1)]">
-                      {para}
+                    <p key={pIdx} className="mb-4 text-justify leading-relaxed text-[var(--t1)]" style={{ fontSize: `${fontSize}px` }}>
+                      {renderHighlightedText(para)}
                     </p>
                   ))
                 ) : (
-                  <p className="italic text-[var(--t3)]">No text available for this topic.</p>
+                  <p className="italic text-[var(--t3)]" style={{ fontSize: `${fontSize}px` }}>No text available for this topic.</p>
                 )}
               </div>
 
@@ -752,10 +1033,10 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                       <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono tracking-widest block">
                         Module: {currentTopic.lesson_slides[activeSlideIdx].type}
                       </span>
-                      <h2 className="text-xl font-bold text-[var(--t1)] font-serif">
+                      <h2 className="text-xl font-bold text-[var(--t1)] font-serif" style={{ fontSize: `${getTabFontSize('lesson', fontSize) * 1.2}px` }}>
                         {currentTopic.lesson_slides[activeSlideIdx].title}
                       </h2>
-                      <p className="text-sm text-[var(--t2)] whitespace-pre-line leading-relaxed font-serif pt-2 border-t border-[var(--bd)]/10">
+                      <p className="text-sm text-[var(--t2)] whitespace-pre-line leading-relaxed font-serif pt-2 border-t border-[var(--bd)]/10" style={{ fontSize: `${getTabFontSize('lesson', fontSize)}px` }}>
                         {currentTopic.lesson_slides[activeSlideIdx].content}
                       </p>
                     </div>
@@ -855,7 +1136,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                             <span>Formulating comprehensive explanation...</span>
                           </div>
                         ) : (
-                          <p className="whitespace-pre-line leading-relaxed text-[var(--t1)]">{slideAIResponse}</p>
+                          <p className="whitespace-pre-line leading-relaxed text-[var(--t1)]" style={{ fontSize: `${getTabFontSize('lesson', fontSize)}px` }}>{slideAIResponse}</p>
                         )}
                       </div>
                     )}
@@ -883,7 +1164,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                           className="w-full text-left p-4 flex justify-between items-center hover:bg-[var(--ra)] transition"
                         >
                           <div className="min-w-0 pr-4">
-                            <h3 className="font-bold text-xs font-sans text-[var(--t1)]">{concept.concept}</h3>
+                            <h3 className="font-bold font-sans text-[var(--t1)]" style={{ fontSize: `${getTabFontSize('concepts', fontSize)}px` }}>{concept.concept}</h3>
                             {concept.article && (
                               <span className="text-[10px] font-mono text-[var(--gd)] mt-0.5 block">Article {concept.article}</span>
                             )}
@@ -895,12 +1176,12 @@ An image or PDF containing the handwritten answer draft is attached to this requ
 
                         {isOpen && (
                           <div className="p-4 bg-[var(--ra)] border-t border-[var(--bd)] space-y-3 animate-fade-in font-sans text-xs">
-                            <p className="text-[var(--t1)] leading-relaxed text-xs font-serif">{concept.explanation}</p>
+                            <p className="text-[var(--t1)] leading-relaxed font-serif" style={{ fontSize: `${getTabFontSize('concepts', fontSize)}px` }}>{concept.explanation}</p>
                             
                             {concept.exam_angle && (
                               <div className="bg-[var(--gg)] border border-[var(--gd2)] p-3 rounded-xl border-l-4 border-l-[var(--gd)] space-y-1">
                                 <span className="font-mono text-[10px] font-bold text-[var(--gd)] uppercase block tracking-wider">UPSC Exam Angle</span>
-                                <p className="text-[var(--t1)] italic text-[11px] leading-relaxed font-serif">{concept.exam_angle}</p>
+                                <p className="text-[var(--t1)] italic leading-relaxed font-serif" style={{ fontSize: `${getTabFontSize('concepts', fontSize)}px` }}>{concept.exam_angle}</p>
                               </div>
                             )}
                           </div>
@@ -951,7 +1232,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                         </span>
 
                         <div className="flex-1 flex items-center justify-center py-4">
-                          <p className="text-sm font-serif font-bold text-[var(--t1)] leading-relaxed">
+                          <p className="text-sm font-serif font-bold text-[var(--t1)] leading-relaxed" style={{ fontSize: `${getTabFontSize('cards', fontSize)}px` }}>
                             {isFlipped ? currentTopic.flashcards[flashcardIdx].back : currentTopic.flashcards[flashcardIdx].front}
                           </p>
                         </div>
@@ -1033,7 +1314,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                           <span className="text-[var(--gd)] font-bold">UPSC PRELIMS</span>
                         </div>
                         
-                        <p className="text-xs font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line">
+                        <p className="font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>
                           {q.question}
                         </p>
 
@@ -1067,7 +1348,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                                 }}
                                 className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition ${borderClass}`}
                               >
-                                <span className="flex-1 pr-3">
+                                <span className="flex-1 pr-3" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>
                                   <strong className="mr-1.5 font-mono">{optionChar}.</strong> {opt}
                                 </span>
                                 {icon && <span className="font-mono font-bold text-sm shrink-0">{icon}</span>}
@@ -1080,7 +1361,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                         {selected && (
                           <div className="p-4 bg-[var(--ra)] rounded-xl text-xs space-y-1.5 animate-fade-in border-l-2 border-l-[var(--gd)]">
                             <span className="font-mono font-bold text-[var(--gd)] text-[10px] uppercase block tracking-wider">Answer Key & Explanation:</span>
-                            <p className="text-[var(--t1)] font-serif leading-relaxed">{q.explanation}</p>
+                            <p className="text-[var(--t1)] font-serif leading-relaxed" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>{q.explanation}</p>
                           </div>
                         )}
                       </div>
@@ -1128,7 +1409,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                     return (
                       <div key={q.id} className="bg-[var(--sur)] border border-[var(--bd)] rounded-2xl p-5 space-y-4">
                         <span className="text-[10px] font-mono text-[var(--t3)] block">QUESTION {idx + 1} of {generatedMCQs.length}</span>
-                        <p className="text-xs font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line">{q.question}</p>
+                        <p className="font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line" style={{ fontSize: `${getTabFontSize('mcq', fontSize)}px` }}>{q.question}</p>
 
                         <div className="space-y-2 text-xs">
                           {q.options.map((opt, oIdx) => {
@@ -1155,7 +1436,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                                 onClick={() => setMcqAnswers(prev => ({ ...prev, [q.id]: optChar }))}
                                 className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition ${optionStyle}`}
                               >
-                                <span><strong className="mr-1">{optChar}.</strong> {opt}</span>
+                                <span style={{ fontSize: `${getTabFontSize('mcq', fontSize)}px` }}><strong className="mr-1">{optChar}.</strong> {opt}</span>
                                 {checkIcon && <span className="font-bold">{checkIcon}</span>}
                               </button>
                             );
@@ -1165,7 +1446,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                         {selected && (
                           <div className="bg-[var(--ra)] border border-[var(--bd)] p-4 rounded-xl text-xs space-y-1 animate-fade-in">
                             <span className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase block">Explanation:</span>
-                            <p className="text-[var(--t1)] font-serif leading-relaxed text-xs">{q.explanation}</p>
+                            <p className="text-[var(--t1)] font-serif leading-relaxed" style={{ fontSize: `${getTabFontSize('mcq', fontSize)}px` }}>{q.explanation}</p>
                           </div>
                         )}
                       </div>
@@ -1227,7 +1508,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                 <div className="space-y-4 animate-fade-in">
                   <div className="bg-[var(--ra)] p-4 rounded-2xl border border-[var(--bd)] space-y-1">
                     <h3 className="text-xs font-bold text-[var(--gd)] uppercase font-mono">Feynman active explanation challenge:</h3>
-                    <p className="text-xs text-[var(--t1)] font-serif italic">
+                    <p className="text-xs text-[var(--t1)] font-serif italic" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
                       "Explain the core mechanisms of this subtopic in extremely simple, plain English—as if you are explaining it to a 10-year-old child."
                     </p>
                   </div>
@@ -1238,6 +1519,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                       rows={5}
                       placeholder="Type your simplified analogical draft here..."
                       className="w-full bg-[var(--sur)] border border-[var(--bd)] text-[var(--t1)] rounded-2xl p-4 text-xs font-serif focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
+                      style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}
                       value={feynmanText}
                       onChange={(e) => setFeynmanText(e.target.value)}
                     />
@@ -1264,7 +1546,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                   {feynmanFeedback && (
                     <div className="bg-[var(--sur)] border border-[var(--bd)] p-5 rounded-3xl text-xs space-y-3 border-l-4 border-l-[var(--gd)] animate-fade-in">
                       <span className="font-mono text-[var(--gd)] font-bold uppercase block text-[10px]">Feynman Audit & Marks Checklist</span>
-                      <div className="text-[var(--t1)] font-serif leading-relaxed text-xs whitespace-pre-line prose prose-invert">
+                      <div className="text-[var(--t1)] font-serif leading-relaxed text-xs whitespace-pre-line prose prose-invert" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
                         {feynmanFeedback}
                       </div>
                     </div>
@@ -1286,7 +1568,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                           <span className="text-[9px] font-mono uppercase block text-right mb-1 opacity-55">
                             {msg.role === 'mentor' ? '🏛️ Socratic Mentor' : 'Aspirant'}
                           </span>
-                          <p>{msg.text}</p>
+                          <p style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>{msg.text}</p>
                         </div>
                       </div>
                     ))}
@@ -1305,6 +1587,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                       type="text"
                       placeholder="Type your analytical reply to Socratic mentor..."
                       className="flex-1 bg-[var(--sur)] text-[var(--t1)] border border-[var(--bd)] rounded-2xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--gd)] font-serif"
+                      style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}
                       value={socraticText}
                       onChange={(e) => setSocraticText(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && sendSocraticMessage()}
@@ -1323,32 +1606,179 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               {/* C. Mains evaluator */}
               {practiceMode === 'mains' && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="bg-[var(--ra)] p-4 rounded-2xl border border-[var(--bd)] text-left">
-                    <span className="text-[9px] uppercase font-bold text-[var(--t3)] font-mono block">UPSC CSE Practice Question:</span>
-                    <p className="text-xs text-[var(--t1)] font-serif font-bold mt-1 leading-relaxed">
-                      {currentTopic.mains_questions?.[0]?.question || `Critically evaluate the democratic authority structures linked with ${currentTopic.title}.`}
-                    </p>
+                  
+                  {/* Mode Selector */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block">Mains Question Mode:</span>
+                    <div className="flex gap-2 p-1 border border-[var(--bd)] rounded-2xl bg-[var(--ra)]/40">
+                      <button
+                        type="button"
+                        onClick={() => setMainsQuestionType('preloaded')}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold uppercase transition ${
+                          mainsQuestionType === 'preloaded'
+                            ? 'bg-[var(--gd)] text-[var(--bg)] shadow-xs'
+                            : 'text-[var(--t2)] hover:text-[var(--t1)]'
+                        }`}
+                      >
+                        📚 Preloaded Question
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMainsQuestionType('manual')}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold uppercase transition ${
+                          mainsQuestionType === 'manual'
+                            ? 'bg-[var(--gd)] text-[var(--bg)] shadow-xs'
+                            : 'text-[var(--t2)] hover:text-[var(--t1)]'
+                        }`}
+                      >
+                        ✍️ Custom Manual
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMainsQuestionType('generated')}
+                        className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold uppercase transition ${
+                          mainsQuestionType === 'generated'
+                            ? 'bg-[var(--gd)] text-[var(--bg)] shadow-xs'
+                            : 'text-[var(--t2)] hover:text-[var(--t1)]'
+                        }`}
+                      >
+                        🔮 AI-Generated (Gemini)
+                      </button>
+                    </div>
                   </div>
 
-                  {currentTopic.mains_questions?.[0]?.answer_skeleton && (
-                    <div className="bg-[var(--sur)] border border-[var(--bd)] p-4 rounded-2xl text-xs">
-                      <h4 className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase mb-1 flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5" />
-                        Model Skeleton (Touch to read)
-                      </h4>
-                      <div className="font-serif leading-relaxed text-[var(--t2)] text-xs mt-1.5 space-y-1">
-                        <p><strong>Intro directive:</strong> {currentTopic.mains_questions[0].answer_skeleton.intro}</p>
-                        <p><strong>Core Body points:</strong> {currentTopic.mains_questions[0].answer_skeleton.body_points.join(' • ')}</p>
+                  {/* PRELOADED QUESTION RENDER */}
+                  {mainsQuestionType === 'preloaded' && (
+                    <div className="space-y-3">
+                      <div className="bg-[var(--ra)] p-4 rounded-2xl border border-[var(--bd)] text-left">
+                        <span className="text-[9px] uppercase font-bold text-[var(--t3)] font-mono block">UPSC CSE Practice Question:</span>
+                        <p className="font-serif font-bold mt-1 leading-relaxed text-[var(--t1)]" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
+                          {currentTopic.mains_questions?.[0]?.question || `Critically evaluate the democratic authority structures linked with ${currentTopic.title}.`}
+                        </p>
+                      </div>
+
+                      {currentTopic.mains_questions?.[0]?.answer_skeleton && (
+                        <div className="bg-[var(--sur)] border border-[var(--bd)] p-4 rounded-2xl text-xs">
+                          <h4 className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase mb-1 flex items-center gap-1">
+                            <FileText className="w-3.5 h-3.5" />
+                            Model Skeleton (Touch to read)
+                          </h4>
+                          <div className="font-serif leading-relaxed text-[var(--t2)] text-xs mt-1.5 space-y-1" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
+                            <p><strong>Intro directive:</strong> {currentTopic.mains_questions[0].answer_skeleton.intro}</p>
+                            <p><strong>Core Body points:</strong> {currentTopic.mains_questions[0].answer_skeleton.body_points.join(' • ')}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* CUSTOM MANUAL QUESTION RENDER */}
+                  {mainsQuestionType === 'manual' && (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5 text-left bg-[var(--sur)] p-4 rounded-2xl border border-[var(--bd)]">
+                        <label className="block text-[10px] uppercase font-bold text-[var(--t3)] font-mono">Type Custom UPSC Practice Question</label>
+                        <input
+                          type="text"
+                          placeholder="Type your custom question here... (e.g. 'To what extent is Article 356 a dead letter?')"
+                          className="w-full bg-[var(--bg)] border border-[var(--bd)] text-[var(--t1)] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
+                          value={customMainsQuestion}
+                          onChange={(e) => setCustomMainsQuestion(e.target.value)}
+                        />
+                        <p className="text-[10px] text-[var(--t3)] italic mt-1">Write your custom question above, then draft or upload your answer below for evaluation.</p>
                       </div>
                     </div>
                   )}
 
+                  {/* AI GENERATED QUESTION RENDER */}
+                  {mainsQuestionType === 'generated' && (
+                    <div className="space-y-3">
+                      {generatedMainsQuestion ? (
+                        <div className="space-y-3">
+                          <div className="bg-[var(--ra)] p-4 rounded-2xl border border-[var(--bd)] text-left">
+                            <span className="text-[9px] uppercase font-bold text-[var(--t3)] font-mono block">AI-Generated Question (Gemini):</span>
+                            <p className="font-serif font-bold mt-1 leading-relaxed text-[var(--t1)]" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
+                              {generatedMainsQuestion}
+                            </p>
+                          </div>
+
+                          {generatedMainsSkeleton && (
+                            <div className="bg-[var(--sur)] border border-[var(--bd)] p-4 rounded-2xl text-xs">
+                              <h4 className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase mb-1 flex items-center gap-1">
+                                <FileText className="w-3.5 h-3.5" />
+                                AI Answer Blueprint / Model Skeleton
+                              </h4>
+                              <div className="font-serif leading-relaxed text-[var(--t2)] text-xs mt-1.5 space-y-1" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
+                                <p><strong>Intro directive:</strong> {generatedMainsSkeleton.intro}</p>
+                                <p><strong>Core Body points:</strong> {generatedMainsSkeleton.body_points.join(' • ')}</p>
+                                <p><strong>Conclusion:</strong> {generatedMainsSkeleton.conclusion}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-[var(--sur)] border border-[var(--bd)] rounded-2xl p-6 text-center space-y-3">
+                          <Sparkles className="w-8 h-8 text-[var(--gd)] mx-auto animate-pulse" />
+                          <p className="text-xs text-[var(--t2)] max-w-sm mx-auto">
+                            Generate a realistic, high-impact UPSC Mains paper question for this subtopic ("{currentTopic.title}") using Gemini 3.5.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleGenerateMainsQuestion}
+                            disabled={mainsQuestionLoading}
+                            className="bg-[var(--gd)] text-[var(--bg)] font-bold text-xs uppercase px-4 py-2.5 rounded-xl hover:opacity-90 transition inline-flex items-center gap-2 cursor-pointer"
+                          >
+                            {mainsQuestionLoading ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                Formulating Question...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                Generate UPSC Question
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
+                      {generatedMainsQuestion && (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={handleGenerateMainsQuestion}
+                            disabled={mainsQuestionLoading}
+                            className="border border-[var(--bd)] text-[var(--t2)] hover:text-[var(--t1)] hover:bg-[var(--ra)] text-[10px] font-bold uppercase px-3 py-1.5 rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Generate Different Question
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Answer Text Area & Preload Trigger */}
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] uppercase font-bold text-[var(--t3)]">Input Draft Answer (Optional if attaching image/PDF)</label>
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] uppercase font-bold text-[var(--t3)] font-mono">
+                        Input Draft Answer (Optional if attaching image/PDF)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handlePreloadAnswer}
+                        className="text-[10px] font-bold text-[var(--gd)] hover:underline uppercase flex items-center gap-1 cursor-pointer"
+                        title="Prepopulate the outline of model points"
+                      >
+                        <FileText className="w-3 h-3" />
+                        Preload Model Outline
+                      </button>
+                    </div>
                     <textarea
                       rows={5}
                       placeholder="Compose your structured essay-style answer. State definitions, body headings, subpoints, and balanced final summary..."
                       className="w-full bg-[var(--sur)] border border-[var(--bd)] text-[var(--t1)] rounded-2xl p-4 text-xs font-serif focus:outline-none focus:ring-1 focus:ring-[var(--gd)] leading-relaxed"
+                      style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}
                       value={mainsText}
                       onChange={(e) => setMainsText(e.target.value)}
                     />
@@ -1417,7 +1847,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                   <button
                     onClick={evaluateMainsAnswer}
                     disabled={mainsLoading || (!mainsText.trim() && !mainsAttachment)}
-                    className="bg-[var(--gd)] text-[var(--bg)] px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition flex items-center gap-1.5"
+                    className="bg-[var(--gd)] text-[var(--bg)] px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition flex items-center gap-1.5 cursor-pointer"
                   >
                     {mainsLoading ? (
                       <>
@@ -1435,7 +1865,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                   {mainsEvaluation && (
                     <div className="bg-[var(--sur)] border border-[var(--bd)] p-5 rounded-3xl text-xs space-y-3 animate-fade-in border-l-4 border-l-[var(--gd)] text-left">
                       <span className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase block">Official UPSC Grade Sheet Evaluation</span>
-                      <p className="text-[var(--t1)] font-serif leading-relaxed text-xs whitespace-pre-line">{mainsEvaluation}</p>
+                      <p className="text-[var(--t1)] font-serif leading-relaxed whitespace-pre-line" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>{mainsEvaluation}</p>
                     </div>
                   )}
                 </div>
@@ -1451,7 +1881,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               <div className="bg-[var(--sur)] border border-[var(--bd)] p-5 rounded-2xl space-y-3">
                 <h3 className="font-bold text-xs text-[var(--t1)]">Static Current Connections:</h3>
                 {currentTopic.ca_angles && currentTopic.ca_angles.length > 0 ? (
-                  <ul className="list-disc pl-5 text-xs text-[var(--t2)] font-serif leading-relaxed space-y-2">
+                  <ul className="list-disc pl-5 text-xs text-[var(--t2)] font-serif leading-relaxed space-y-2" style={{ fontSize: `${getTabFontSize('ca', fontSize)}px` }}>
                     {currentTopic.ca_angles.map((ang, idx) => (
                       <li key={idx}>{ang}</li>
                     ))}
@@ -1487,7 +1917,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
               {caUpdates && (
                 <div className="bg-[var(--sur)] border border-[var(--bd)] p-5 rounded-2xl animate-fade-in border-l-4 border-l-[var(--gd)] text-xs text-left">
                   <span className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase block tracking-wider mb-2">Synced Current Updates:</span>
-                  <div className="text-[var(--t1)] font-serif whitespace-pre-line leading-relaxed prose prose-invert">
+                  <div className="text-[var(--t1)] font-serif whitespace-pre-line leading-relaxed prose prose-invert" style={{ fontSize: `${getTabFontSize('ca', fontSize)}px` }}>
                     {caUpdates}
                   </div>
                 </div>
@@ -1512,6 +1942,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                 rows={10}
                 placeholder="Draft summaries, compile article checklists, or jot down memory hooks for this subtopic..."
                 className="w-full bg-[var(--sur)] border border-[var(--bd)] text-[var(--t1)] rounded-2xl p-4 text-xs font-serif focus:outline-none focus:ring-1 focus:ring-[var(--gd)] leading-relaxed"
+                style={{ fontSize: `${getTabFontSize('notes', fontSize)}px` }}
                 value={localNotes}
                 onChange={(e) => {
                   setLocalNotes(e.target.value);
@@ -1555,6 +1986,45 @@ An image or PDF containing the handwritten answer draft is attached to this requ
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Floating Highlight Color Picker Popup */}
+        {showHighlightPopup && (
+          <div 
+            className="fixed z-50 bg-[var(--sur)] border border-[var(--bd)] p-1.5 rounded-xl shadow-xl flex items-center gap-1.5 animate-fade-in"
+            style={{ 
+              top: `${popupPosition.y - 45}px`, 
+              left: `${popupPosition.x}px`,
+              transform: 'translateX(-50%)'
+            }}
+          >
+            <span className="text-[10px] text-[var(--t3)] font-sans px-1 font-bold">Highlight:</span>
+            <button
+              onClick={() => handleSaveHighlight('yellow')}
+              className="w-5 h-5 rounded-full bg-yellow-200 border border-yellow-300 hover:scale-110 transition cursor-pointer"
+              title="Yellow Highlight"
+            />
+            <button
+              onClick={() => handleSaveHighlight('green')}
+              className="w-5 h-5 rounded-full bg-emerald-300 border border-emerald-400 hover:scale-110 transition cursor-pointer"
+              title="Green Highlight"
+            />
+            <button
+              onClick={() => handleSaveHighlight('pink')}
+              className="w-5 h-5 rounded-full bg-pink-300 border border-pink-400 hover:scale-110 transition cursor-pointer"
+              title="Pink Highlight"
+            />
+            <div className="w-[1px] h-4 bg-[var(--bd)] mx-0.5" />
+            <button
+              onClick={() => {
+                setShowHighlightPopup(false);
+                window.getSelection()?.removeAllRanges();
+              }}
+              className="text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--ra)] text-[var(--t2)] hover:text-[var(--t1)] font-sans font-bold cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
       </div>
 

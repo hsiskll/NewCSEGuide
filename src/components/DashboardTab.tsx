@@ -128,7 +128,7 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
               <span className="text-xs uppercase tracking-widest text-[var(--gd)] font-bold font-mono">UPSC Academy Dashboard</span>
             </div>
             <h1 className="text-2xl md:text-3xl font-bold font-serif tracking-tight text-[var(--t1)]">
-              Satyameva Jayate, Scholar
+              Hello, Ray
             </h1>
             <p className="text-xs text-[var(--t2)] mt-1 max-w-xl font-serif italic">
               Target Year: <strong className="text-[var(--gd)] font-sans not-italic">{state.settings?.goal?.targetYear || '2026'}</strong> | Focus Area: <strong className="text-[var(--gd)] font-sans not-italic">{state.settings?.goal?.focusArea || 'Indian Polity'}</strong>

@@ -66,3 +66,38 @@ body {
   background: var(--gg);
   color: var(--gd);
 }
+
+/* Ensure the adjustable font sizes work perfectly across all sections, overriding fixed classes if inside the container */
+.font-size-adjustable-container p,
+.font-size-adjustable-container li {
+  font-size: 1em;
+}
+
+.font-size-adjustable-container h1 { font-size: 1.875em !important; }
+.font-size-adjustable-container h2 { font-size: 1.5em !important; }
+.font-size-adjustable-container h3 { font-size: 1.25em !important; }
+.font-size-adjustable-container h4 { font-size: 1.125em !important; }
+.font-size-adjustable-container h5 { font-size: 1em !important; }
+.font-size-adjustable-container h6 { font-size: 0.875em !important; }
+
+.font-size-adjustable-container .text-[9px] { font-size: 0.5625em !important; }
+.font-size-adjustable-container .text-[10px] { font-size: 0.625em !important; }
+.font-size-adjustable-container .text-[11px] { font-size: 0.6875em !important; }
+.font-size-adjustable-container .text-xs { font-size: 0.75em !important; }
+.font-size-adjustable-container .text-sm { font-size: 0.875em !important; }
+.font-size-adjustable-container .text-base { font-size: 1em !important; }
+.font-size-adjustable-container .text-lg { font-size: 1.125em !important; }
+.font-size-adjustable-container .text-xl { font-size: 1.25em !important; }
+.font-size-adjustable-container .text-2xl { font-size: 1.5em !important; }
+.font-size-adjustable-container .text-3xl { font-size: 1.875em !important; }
+.font-size-adjustable-container .text-4xl { font-size: 2.25em !important; }
+
+/* Flashcard Y-axis rotation and legible text restoration */
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+.rotate-y-180 > * {
+  transform: rotateY(180deg);
+}
+
