@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, LayoutDashboard, Bookmark, Compass, Settings, 
-  Menu, X, GraduationCap, Flame, Clock, Award, ShieldCheck, CheckCircle, Palette
+  Menu, X, GraduationCap, Flame, Clock, Award, ShieldCheck, CheckCircle, Palette,
+  Target, Check, Database
 } from 'lucide-react';
 
 import { 
@@ -21,6 +22,7 @@ import ChapterLibraryTab from './components/ChapterLibraryTab';
 import ChapterReaderTab from './components/ChapterReaderTab';
 import LeitnerRevisionTab from './components/LeitnerRevisionTab';
 import SettingsTab from './components/SettingsTab';
+import ImportCenterTab from './components/ImportCenterTab';
 import FloatingAskAI from './components/FloatingAskAI';
 
 const LOCAL_STORAGE_KEY = 'cseguide_state_v1';
@@ -151,20 +153,65 @@ const INITIAL_STATE: UPSCState = {
     goal: {
       dailyTargetMinutes: 60,
       targetYear: '2026',
-      focusArea: 'Indian Polity & Constitution'
+      focusArea: 'Indian Polity & Constitution',
+      userName: 'Ray'
     }
   }
 };
 
 export default function App() {
   const [state, setState] = useState<UPSCState>(INITIAL_STATE);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'reader' | 'leitner' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'reader' | 'leitner' | 'import' | 'settings'>('dashboard');
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [initialSectionId, setInitialSectionId] = useState<string | undefined>(undefined);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeKey>('scholar');
   const [zenMode, setZenMode] = useState(false);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [showGoalsPopup, setShowGoalsPopup] = useState(false);
+
+  // Auto-trigger daily goals notification and in-app window
+  useEffect(() => {
+    // Only trigger if onboarding has been completed
+    if (!state.settings?.hasCompletedOnboarding) return;
+
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const hours = today.getHours();
+
+    // Trigger at 8 AM or after
+    if (hours >= 8) {
+      const lastDismissed = localStorage.getItem('cseguide_last_dismissed_goals_date');
+      if (lastDismissed !== todayStr) {
+        setShowGoalsPopup(true);
+
+        // System notification trigger
+        if (typeof window !== 'undefined' && 'Notification' in window) {
+          if (Notification.permission === 'default') {
+            Notification.requestPermission();
+          } else if (Notification.permission === 'granted') {
+            const targets = state.planner?.[todayStr]?.targets || [];
+            const textTargets = targets.length > 0
+              ? targets.map(t => `• ${t.text}`).join('\n')
+              : "No specific targets set yet. Open your planner to add goals!";
+
+            try {
+              const notification = new Notification("Today's Targets", {
+                body: textTargets,
+                vibrate: [100]
+              } as any);
+              notification.onclick = () => {
+                window.focus();
+                setShowGoalsPopup(true);
+              };
+            } catch (err) {
+              console.log('Notification delivery failed', err);
+            }
+          }
+        }
+      }
+    }
+  }, [state.settings?.hasCompletedOnboarding, state.planner]);
 
   // Initialize activeFolderId when folders are ready
   useEffect(() => {
@@ -546,6 +593,7 @@ export default function App() {
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
               { id: 'library', label: 'Study Library', icon: BookOpen },
               { id: 'leitner', label: 'Leitner Revision', icon: Compass },
+              { id: 'import', label: 'JSON Import Center', icon: Database },
               { id: 'settings', label: 'Settings', icon: Settings }
             ].map(item => {
               const Icon = item.icon;
@@ -622,6 +670,7 @@ export default function App() {
             onNavigateToChapter={handleNavigateFromSearch}
             onNavigateToLeitner={() => setActiveTab('leitner')}
             onNavigateToSubject={handleNavigateToSubject}
+            onUpdateState={saveState}
           />
         )}
 
@@ -693,6 +742,14 @@ export default function App() {
             onUpdateFlashcard={handleUpdateFlashcard}
             onAddFlashcard={handleAddFlashcard}
             onDeleteFlashcard={handleDeleteFlashcard}
+            planner={state.planner || {}}
+          />
+        )}
+
+        {activeTab === 'import' && (
+          <ImportCenterTab
+            state={state}
+            onUpdateState={saveState}
           />
         )}
 
@@ -706,6 +763,68 @@ export default function App() {
         )}
 
       </main>
+
+      {/* Today's Goals Pop-up Window */}
+      {showGoalsPopup && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[var(--sur)] border-2 border-[var(--gd)] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-scale-up">
+            <div className="bg-gradient-to-r from-[var(--ra)] to-[var(--sur)] p-6 border-b border-[var(--bd)] relative text-center">
+              <div className="mx-auto w-12 h-12 bg-[var(--gg)] rounded-full flex items-center justify-center mb-3 border border-[var(--gd)]/30">
+                <Target className="w-6 h-6 text-[var(--gd)]" />
+              </div>
+              <h2 className="font-serif font-bold text-xl text-[var(--t1)]">Today's Targets</h2>
+              <p className="text-xs text-[var(--t3)] font-mono uppercase tracking-wider mt-1">{todayStr}</p>
+              <p className="text-xs text-[var(--t2)] mt-2">
+                Hello, <span className="font-bold text-[var(--gd)]">{state.settings?.goal?.userName || 'Ray'}</span>! Let's conquer today's study benchmarks.
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-60 overflow-y-auto">
+              {(!state.planner?.[todayStr] || state.planner?.[todayStr].targets.length === 0) ? (
+                <div className="text-center py-6 text-xs text-[var(--t3)] italic space-y-2">
+                  <p>No goals have been logged for today yet.</p>
+                  <p className="text-[10px]">Head over to the daily planner on the dashboard to log chapters, revision cycles, or custom goals!</p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {state.planner[todayStr].targets.map((task: any) => (
+                    <div 
+                      key={task.id}
+                      className="flex items-start gap-3 p-3 bg-[var(--ra)]/40 border border-[var(--bd)] rounded-xl"
+                    >
+                      <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                        task.completed 
+                          ? 'bg-emerald-500 border-emerald-500 text-white' 
+                          : 'border-[var(--t3)]'
+                      }`}>
+                        {task.completed && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                      <span className={`text-xs leading-snug font-medium ${
+                        task.completed ? 'line-through text-[var(--t3)]' : 'text-[var(--t3)]'
+                      }`}>
+                        {task.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-[var(--ra)]/30 border-t border-[var(--bd)] flex justify-end">
+              <button
+                onClick={() => {
+                  localStorage.setItem('cseguide_last_dismissed_goals_date', todayStr);
+                  setShowGoalsPopup(false);
+                }}
+                className="w-full bg-[var(--gd)] text-[var(--bg)] py-3 px-4 rounded-xl text-xs uppercase tracking-widest font-bold hover:opacity-90 transition shadow-md active:scale-95 cursor-pointer"
+              >
+                Let's Go!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <FloatingAskAI />
     </div>
   );

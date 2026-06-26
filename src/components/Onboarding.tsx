@@ -11,7 +11,7 @@ interface OnboardingProps {
 export default function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState(0);
   const [targetYear, setTargetYear] = useState('2026');
-  const [focusArea, setFocusArea] = useState('Indian Polity & Constitution');
+  const [userName, setUserName] = useState('Ray');
   const [dailyMinutes, setDailyMinutes] = useState(60);
   const [apiKey, setApiKey] = useState('');
   const [testing, setTesting] = useState(false);
@@ -30,8 +30,9 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     onComplete(
       {
         targetYear,
-        focusArea,
+        focusArea: 'Indian Polity & Constitution',
         dailyTargetMinutes: Number(dailyMinutes),
+        userName,
       },
       apiKey
     );
@@ -85,13 +86,13 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         </div>
 
         <div>
-          <label className="block text-xs font-bold uppercase tracking-wider text-[#0C1E36] mb-1">Core Subject Focus Area</label>
+          <label className="block text-xs font-bold uppercase tracking-wider text-[#0C1E36] mb-1">Your Name</label>
           <input 
             type="text"
             className="w-full bg-white border border-[#0C1E36] rounded-md p-2.5 text-sm text-[#0C1E36] focus:outline-none focus:ring-2 focus:ring-[#C59B27]"
-            placeholder="e.g. Polity, History, Public Administration, Geography"
-            value={focusArea}
-            onChange={(e) => setFocusArea(e.target.value)}
+            placeholder="e.g. Ray, Alex, Sam"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
           />
         </div>
 

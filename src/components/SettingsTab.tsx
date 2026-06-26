@@ -3,7 +3,7 @@ import {
   Key, ShieldCheck, Download, Upload, Trash2, Check,
   AlertCircle, RefreshCw, FileText, Sparkles
 } from 'lucide-react';
-import { getStoredGeminiKey, setStoredGeminiKey, testGeminiConnection } from '../utils/gemini';
+import { getStoredGeminiKey, setStoredGeminiKey, testGeminiConnection, getStoredGeminiModel, setStoredGeminiModel } from '../utils/gemini';
 import { UPSCState } from '../types';
 
 interface SettingsTabProps {
@@ -20,6 +20,7 @@ export default function SettingsTab({
   onUpdateKey
 }: SettingsTabProps) {
   const [apiKey, setApiKey] = useState(getStoredGeminiKey());
+  const [selectedModel, setSelectedModel] = useState(getStoredGeminiModel());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -37,7 +38,7 @@ export default function SettingsTab({
     if (!apiKey) return;
     setTesting(true);
     setTestResult(null);
-    const success = await testGeminiConnection(apiKey);
+    const success = await testGeminiConnection(apiKey, selectedModel);
     setTesting(false);
     setTestResult(success ? 'success' : 'failed');
   };
@@ -135,7 +136,7 @@ export default function SettingsTab({
         </div>
 
         <p className="text-xs text-brand-slate font-serif leading-relaxed">
-          CSEGuide calls the <strong>Gemini 3.5 Flash</strong> model directly from your browser to power interactive explanations, Mains answers, and MCQs. No studies or secrets are transmitted through intermediary servers.
+          CSEGuide calls your selected <strong>Gemini model</strong> directly from your browser to power interactive explanations, Mains answers, and MCQs. No studies or secrets are transmitted through intermediary servers.
         </p>
 
         <div className="space-y-3 pt-2">
@@ -160,6 +161,28 @@ export default function SettingsTab({
                 Save Key
               </button>
             </div>
+          </div>
+
+          <div className="pt-1">
+            <label className="block text-xs font-bold uppercase tracking-wider text-brand-navy mb-1.5">Select Gemini Model Version (Free Tiers Only)</label>
+            <select
+              className="w-full bg-brand-cream border border-brand-navy/25 rounded p-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-gold text-brand-navy cursor-pointer font-medium"
+              value={selectedModel}
+              onChange={(e) => {
+                const model = e.target.value;
+                setSelectedModel(model);
+                setStoredGeminiModel(model);
+                setTestResult(null);
+              }}
+            >
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Default — Recommended, fast & free)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Lite — Ultra-low latency & free)</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash (Reliable — Multimodal & free)</option>
+              <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B (Lightweight — High efficiency & free)</option>
+            </select>
+            <p className="text-[10px] text-brand-slate font-serif mt-1 leading-relaxed">
+              These options are restricted exclusively to <strong>Gemini Free API Tiers</strong>. They offer high-speed, zero-cost responses directly from your browser.
+            </p>
           </div>
 
           <div className="flex items-center justify-between flex-wrap gap-2 pt-2">
@@ -190,13 +213,13 @@ export default function SettingsTab({
           {testResult === 'success' && (
             <div className="p-3 bg-green-50 border border-green-400 text-green-900 text-xs rounded flex items-center gap-2 animate-fade-in">
               <Check className="w-4 h-4 text-green-600 shrink-0" />
-              <span>API key confirmed working. Gemini 3.5 Flash copilot is fully operational!</span>
+              <span>API key confirmed working. Gemini model {selectedModel} is fully operational!</span>
             </div>
           )}
 
           {testResult === 'failed' && (
             <div className="p-3 bg-red-50 border border-red-400 text-red-900 text-xs rounded animate-fade-in">
-              <span>Authentication failed. Please verify that your Gemini API key is valid and has not been revoked.</span>
+              <span>Authentication failed. Please verify that your Gemini API key is valid and supports the selected model ({selectedModel}).</span>
             </div>
           )}
         </div>

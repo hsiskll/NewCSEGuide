@@ -9,6 +9,13 @@ import {
 } from 'lucide-react';
 import { Chapter, Topic, PYQQuestion, TopicProgress, MCQItem, ThemeKey } from '../types';
 import { callGemini, generateMCQDrill } from '../utils/gemini';
+import { renderFormattedMarkdown } from '../utils/markdown';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configure pdfjs worker
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '6.0.227'}/build/pdf.worker.min.mjs`;
+}
 
 interface SavedHighlight {
   text: string;
@@ -165,7 +172,7 @@ export default function ChapterReaderTab({
   const [mainsText, setMainsText] = useState('');
   const [mainsEvaluation, setMainsEvaluation] = useState('');
   const [mainsLoading, setMainsLoading] = useState(false);
-  const [mainsAttachment, setMainsAttachment] = useState<{ name: string; mimeType: string; data: string } | null>(null);
+  const [mainsAttachment, setMainsAttachment] = useState<{ name: string; mimeType: string; data: string; pdfPages?: { mimeType: string; data: string }[] } | null>(null);
   const [mainsAttachmentError, setMainsAttachmentError] = useState<string>('');
   
   // Mains evaluator configuration states
@@ -457,6 +464,49 @@ export default function ChapterReaderTab({
     setSocraticLoading(false);
   };
 
+  // Convert PDF pages to base64 JPEG images using canvas for handwritten draft rendering
+  const convertPDFToImages = async (arrayBuffer: ArrayBuffer): Promise<{ mimeType: string; data: string }[]> => {
+    try {
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+      const pdf = await loadingTask.promise;
+      const images: { mimeType: string; data: string }[] = [];
+      
+      // Limit to first 3 pages to avoid memory/token issues while covering standard length answers
+      const pagesToRender = Math.min(pdf.numPages, 3);
+      
+      for (let pageNum = 1; pageNum <= pagesToRender; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 }); // Good resolution for OCR/reading text
+        
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) continue;
+        
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        await page.render({
+          canvasContext: context,
+          viewport: viewport,
+          canvas: canvas
+        }).promise;
+        
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85); // Compress slightly for size
+        const commaIdx = dataUrl.indexOf(',');
+        const base64Data = commaIdx !== -1 ? dataUrl.substring(commaIdx + 1) : dataUrl;
+        
+        images.push({
+          mimeType: 'image/jpeg',
+          data: base64Data
+        });
+      }
+      return images;
+    } catch (err: any) {
+      console.error('Failed to convert PDF to images:', err);
+      throw new Error(`Failed to convert PDF to images: ${err.message || err}`);
+    }
+  };
+
   // Mains Attachment File Handler
   const handleMainsFileChange = (file: File) => {
     setMainsAttachmentError('');
@@ -465,23 +515,51 @@ export default function ChapterReaderTab({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      if (result) {
-        const commaIdx = result.indexOf(',');
-        const base64Data = commaIdx !== -1 ? result.substring(commaIdx + 1) : result;
-        setMainsAttachment({
-          name: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          data: base64Data
-        });
-      }
-    };
-    reader.onerror = () => {
-      setMainsAttachmentError("Failed to read file.");
-    };
-    reader.readAsDataURL(file);
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      setMainsLoading(true);
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const result = e.target?.result as ArrayBuffer;
+        if (result) {
+          try {
+            const images = await convertPDFToImages(result);
+            setMainsAttachment({
+              name: file.name,
+              mimeType: 'application/pdf',
+              data: '', // Not used directly, pdfPages holds the extracted page images
+              pdfPages: images
+            });
+          } catch (err: any) {
+            setMainsAttachmentError(err.message || "Failed to process PDF.");
+          } finally {
+            setMainsLoading(false);
+          }
+        }
+      };
+      reader.onerror = () => {
+        setMainsAttachmentError("Failed to read file.");
+        setMainsLoading(false);
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        if (result) {
+          const commaIdx = result.indexOf(',');
+          const base64Data = commaIdx !== -1 ? result.substring(commaIdx + 1) : result;
+          setMainsAttachment({
+            name: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            data: base64Data
+          });
+        }
+      };
+      reader.onerror = () => {
+        setMainsAttachmentError("Failed to read file.");
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const getActiveMainsQuestionAndSkeleton = () => {
@@ -583,7 +661,8 @@ An image or PDF containing the handwritten answer draft is attached to this requ
     prompt += `\n\nQuestion: "${question}"\n\nStudent's Typewritten Answer (if any):\n"${mainsText}"\n\nEvaluate using official UPSC evaluation criteria. Provide a structured, highly detailed, and beautifully presented review covering:\n1. INTRODUCTION SCORE (out of 2 marks. Did they define the context, quote articles?)\n2. BODY SCORE (out of 6 marks. Did they address the core directive, list points, quote SC judgments/cases, use sideheadings?)\n3. CONCLUSION SCORE (out of 2 marks. Progressive way forward?)\n4. STRATEGIC FEEDBACK (Specify 2 high-yield value addition points, e.g., a relevant Supreme Court case, Commission report, or data to instantly boost marks).\n\nFormat your evaluation in clean Markdown. Use subheadings, bullet points, and key bold elements for a premium aesthetic.`;
     
     try {
-      const res = await callGemini(prompt, 'gemini-3.5-flash', mainsAttachment || undefined);
+      const attachmentToPass = mainsAttachment?.pdfPages || (mainsAttachment ? { mimeType: mainsAttachment.mimeType, data: mainsAttachment.data } : undefined);
+      const res = await callGemini(prompt, 'gemini-2.5-flash', attachmentToPass);
       setMainsEvaluation(res);
     } catch (err: any) {
       setMainsEvaluation(`Evaluation failed: ${err.message || err}`);
@@ -1865,7 +1944,9 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                   {mainsEvaluation && (
                     <div className="bg-[var(--sur)] border border-[var(--bd)] p-5 rounded-3xl text-xs space-y-3 animate-fade-in border-l-4 border-l-[var(--gd)] text-left">
                       <span className="font-mono text-[var(--gd)] font-bold text-[10px] uppercase block">Official UPSC Grade Sheet Evaluation</span>
-                      <p className="text-[var(--t1)] font-serif leading-relaxed whitespace-pre-line" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>{mainsEvaluation}</p>
+                      <div className="text-[var(--t1)] leading-relaxed" style={{ fontSize: `${getTabFontSize('practice', fontSize)}px` }}>
+                        {renderFormattedMarkdown(mainsEvaluation)}
+                      </div>
                     </div>
                   )}
                 </div>

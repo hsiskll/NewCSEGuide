@@ -10,6 +10,16 @@ export function setStoredGeminiKey(key: string): void {
   localStorage.setItem('cseguide_gemini_key', key.trim());
 }
 
+// Retrieve the stored Gemini model from localStorage
+export function getStoredGeminiModel(): string {
+  return localStorage.getItem('cseguide_gemini_model') || 'gemini-2.5-flash';
+}
+
+// Store the model version in localStorage
+export function setStoredGeminiModel(model: string): void {
+  localStorage.setItem('cseguide_gemini_model', model);
+}
+
 // Initialize the Google GenAI client dynamically
 export function getGeminiClient(customKey?: string): GoogleGenAI {
   const key = customKey || getStoredGeminiKey();
@@ -27,11 +37,12 @@ export function getGeminiClient(customKey?: string): GoogleGenAI {
 }
 
 // Test the Gemini connection
-export async function testGeminiConnection(key: string): Promise<boolean> {
+export async function testGeminiConnection(key: string, customModel?: string): Promise<boolean> {
   try {
     const ai = getGeminiClient(key);
+    const modelId = customModel || getStoredGeminiModel();
     const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: modelId,
       contents: 'Respond with the word "Success" and nothing else to confirm this connection works.',
     });
     return response.text?.trim().toLowerCase().includes('success') || false;
@@ -59,8 +70,9 @@ function cleanJsonResponse(rawText: string): string {
 // 1. Simple Explanation Action
 export async function generateSimpleExplanation(textSection: string): Promise<string> {
   const ai = getGeminiClient();
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: `Explain the following text in an easy-to-understand, intuitive way. Break down any complex constitutional, administrative, legal, or economic jargon into simple terms. Use analogies if possible, but maintain intellectual precision suitable for a UPSC Civil Services aspirant:
     
     "${textSection}"`,
@@ -71,8 +83,9 @@ export async function generateSimpleExplanation(textSection: string): Promise<st
 // 2. UPSC Lens (Prelims vs Mains) Action
 export async function generateUPSCLens(textSection: string): Promise<string> {
   const ai = getGeminiClient();
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: `Analyze the following study text through the lens of the UPSC Civil Services Examination. Provide an analytical breakdown with two clear, well-structured sections:
     
 1. PRELIMS FOCUS (What factual trivia, specific clauses, constitutional articles, names, dates, reports, or institutional compositions should be memorized for multiple-choice questions?)
@@ -89,8 +102,9 @@ Text to analyze:
 // 3. Socratic Questions Action
 export async function generateSocraticQuestions(textSection: string): Promise<string> {
   const ai = getGeminiClient();
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: `You are an expert UPSC mentor. Formulate 3 thought-provoking Socratic questions based on the text below to challenge the reader's critical understanding, encourage them to think about real-world policy implications, trade-offs, and ethical or constitutional issues. For each question, provide a brief, high-level guiding hint or counter-perspective to stimulate their analysis:
     
     "${textSection}"`,
@@ -127,8 +141,9 @@ export async function generateMCQDrill(textSection: string, subject: string): Pr
   Study Text:
   "${textSection}"`;
 
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -191,8 +206,9 @@ export async function generateFlashcards(textSection: string, subject: string): 
   Study Text:
   "${textSection}"`;
 
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -227,8 +243,9 @@ export async function generateFlashcards(textSection: string, subject: string): 
 // 6. Mains Answer Skeleton Action
 export async function generateMainsSkeleton(textSection: string): Promise<string> {
   const ai = getGeminiClient();
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: `Based on the text below, formulate a highly probable UPSC Civil Services Mains-style descriptive question (typically worth 10 marks/150 words or 15 marks/250 words). 
     Then, provide a premium "Answer Skeleton" or structural draft that teaches the aspirant how to write a high-scoring response. 
     
@@ -271,8 +288,9 @@ export async function generateCAClassifier(textSection: string): Promise<CAClass
   Study Text:
   "${textSection}"`;
 
+  const modelId = getStoredGeminiModel();
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
+    model: modelId,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -308,27 +326,29 @@ export async function generateCAClassifier(textSection: string): Promise<CAClass
 // 8. General-purpose Gemini caller for chat & custom prompts with optional attachment support
 export async function callGemini(
   prompt: string, 
-  modelId: string = 'gemini-3.5-flash',
-  attachment?: { mimeType: string; data: string }
+  modelId?: string,
+  attachment?: { mimeType: string; data: string } | { mimeType: string; data: string }[]
 ): Promise<string> {
   try {
     const ai = getGeminiClient();
     let response;
+    const finalModelId = (!modelId || modelId === 'gemini-3.5-flash' || modelId === 'gemini-2.5-flash') ? getStoredGeminiModel() : modelId;
     
     if (attachment) {
-      const part = {
+      const attachmentsArray = Array.isArray(attachment) ? attachment : [attachment];
+      const parts = attachmentsArray.map(att => ({
         inlineData: {
-          mimeType: attachment.mimeType,
-          data: attachment.data,
+          mimeType: att.mimeType,
+          data: att.data,
         },
-      };
+      }));
       response = await ai.models.generateContent({
-        model: modelId,
-        contents: [part, prompt],
+        model: finalModelId,
+        contents: [...parts, prompt],
       });
     } else {
       response = await ai.models.generateContent({
-        model: modelId,
+        model: finalModelId,
         contents: prompt,
       });
     }

@@ -11,6 +11,7 @@ interface LeitnerRevisionTabProps {
   onUpdateFlashcard: (card: Flashcard) => void;
   onAddFlashcard: (card: Omit<Flashcard, 'id' | 'createdAt' | 'streak'>) => void;
   onDeleteFlashcard: (id: string) => void;
+  planner?: Record<string, any>;
 }
 
 const BOX_DETAILS = [
@@ -25,7 +26,8 @@ export default function LeitnerRevisionTab({
   flashcards,
   onUpdateFlashcard,
   onAddFlashcard,
-  onDeleteFlashcard
+  onDeleteFlashcard,
+  planner = {}
 }: LeitnerRevisionTabProps) {
   const [isFlipped, setIsFlipped] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -48,9 +50,43 @@ export default function LeitnerRevisionTab({
   const [jsonError, setJsonError] = useState('');
   const [jsonSuccess, setJsonSuccess] = useState('');
 
+  // Gather completed chapter IDs and their completion date
+  const completedChaptersForLeitner = React.useMemo(() => {
+    const completedIds = new Set<string>();
+    const today = new Date();
+
+    Object.entries(planner).forEach(([dateStr, dayPlanner]) => {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return;
+      const compDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+
+      // T+2 threshold: must be at least 2 days ago
+      const tPlusTwo = new Date(compDate);
+      tPlusTwo.setDate(tPlusTwo.getDate() + 2);
+
+      if (tPlusTwo <= today) {
+        if (dayPlanner && Array.isArray(dayPlanner.targets)) {
+          dayPlanner.targets.forEach((t: any) => {
+            if (t.chapterId && t.completed) {
+              completedIds.add(t.chapterId);
+            }
+          });
+        }
+      }
+    });
+    return completedIds;
+  }, [planner]);
+
   // Filter due cards
   const now = new Date();
   const dueQueue = flashcards.filter(card => {
+    // If card belongs to a chapter, check if that chapter was completed in planner >= 2 days ago
+    if (card.chapterId) {
+      if (!completedChaptersForLeitner.has(card.chapterId)) {
+        return false; // Not due/active yet because chapter was not completed >= 2 days ago
+      }
+    }
+
     const rDate = new Date(card.nextReviewDate);
     return rDate <= now;
   });

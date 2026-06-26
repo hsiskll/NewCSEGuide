@@ -74,6 +74,7 @@ export interface Topic {
   flashcards?: TopicFlashcard[];
   pyq_ids?: string[];
   pyqs?: PYQQuestion[];
+  mcqs?: MCQItem[]; // Added for custom-imported MCQs
   mains_questions?: MainsQuestion[];
   socratic_questions?: string[];
   feynman_prompts?: string[];
@@ -132,6 +133,7 @@ export interface StudyGoal {
   dailyTargetMinutes: number;
   targetYear: string;
   focusArea: string;
+  userName?: string;
 }
 
 export interface UserSettings {
@@ -143,6 +145,7 @@ export interface UserSettings {
     lineSpacing: number;
   };
   goal: StudyGoal;
+  userName?: string;
 }
 
 export interface TopicProgress {
@@ -153,6 +156,32 @@ export interface TopicProgress {
   pyq: Record<string, string>; // qid -> answer
   notes?: string;
   fc?: { r: number; t: number };
+  pyqAttempts?: Record<string, { answer: string; date: string; isCorrect: boolean }[]>;
+  mcqAttempts?: Record<string, { answer: string; date: string; isCorrect: boolean }[]>;
+}
+
+export interface PlannerTask {
+  id: string;
+  text: string;
+  completed: boolean;
+  chapterId?: string;
+  subject?: string;
+  subsection?: string;
+}
+
+export interface DailyPlanner {
+  date: string; // "YYYY-MM-DD"
+  targets: PlannerTask[];
+  notes?: string;
+  leitnerCompleted?: boolean;
+}
+
+export interface PersonalGoal {
+  id: string;
+  text: string;
+  completed: boolean;
+  category?: string; // e.g. "Polity", "GS1", "Revision"
+  createdAt: string;
 }
 
 export interface UPSCState {
@@ -164,6 +193,12 @@ export interface UPSCState {
   settings: UserSettings;
   topicProgress?: Record<string, TopicProgress>; // topicId -> progress record
   theme?: ThemeKey;
+  planner?: Record<string, DailyPlanner>; // YYYY-MM-DD -> DailyPlanner
+  personalGoals?: PersonalGoal[];
+  leitnerStreak?: {
+    streak: number;
+    lastReviewedDate?: string; // YYYY-MM-DD
+  };
 }
 
 export interface MCQItem {
