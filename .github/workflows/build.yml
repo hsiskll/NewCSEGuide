@@ -1,0 +1,108 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Capacitor (if missing)
+        run: |
+          if ! npm ls @capacitor/core > /dev/null 2>&1; then
+            echo "Capacitor not found — installing core, cli, android..."
+            npm install @capacitor/core @capacitor/cli @capacitor/android
+          else
+            echo "Capacitor already installed, skipping."
+          fi
+
+      - name: Build web app
+        run: npm run build
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Initialize Capacitor config (if missing)
+        run: |
+          if [ ! -f capacitor.config.ts ] && [ ! -f capacitor.config.json ]; then
+            echo "No Capacitor config found — initializing..."
+            npx cap init "CSEGuide" "com.hsiskll.cseguide" --web-dir=dist
+          else
+            echo "Capacitor config already exists, skipping init."
+          fi
+
+      - name: Add Android platform (if missing)
+        run: |
+          if [ ! -d android ]; then
+            echo "No android/ folder found — adding platform..."
+            npx cap add android
+          else
+            echo "android/ already exists, skipping add."
+          fi
+
+      - name: Patch Kotlin stdlib duplicate-class conflict
+        run: |
+          if ! grep -q "kotlin-stdlib-jdk7" android/app/build.gradle; then
+            cat >> android/app/build.gradle << 'EOF'
+
+          configurations.all {
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+          }
+          EOF
+            echo "Patched app/build.gradle to exclude legacy kotlin-stdlib-jdk7/jdk8."
+          else
+            echo "Patch already present, skipping."
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build APK
+        run: cd android && ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Commit generated Capacitor scaffolding (first run only)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add capacitor.config.ts capacitor.config.json android package.json package-lock.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: add generated Capacitor/Android scaffolding"
+            git push
+          else
+            echo "Nothing new to commit."
+          fi
