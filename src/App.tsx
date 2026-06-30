@@ -3,7 +3,7 @@ import {
   BookOpen, LayoutDashboard, Bookmark, Compass, Settings, 
   Menu, X, GraduationCap, Flame, Clock, Award, ShieldCheck, CheckCircle, Palette,
   Target, Check, Database, Search, ChevronLeft, ChevronRight, Timer, RefreshCw,
-  Minimize2, Maximize2, Play, Pause, CalendarCheck
+  Minimize2, Maximize2, Play, Pause, CalendarCheck, Newspaper
 } from 'lucide-react';
 
 import { 
@@ -27,6 +27,7 @@ import ImportCenterTab from './components/ImportCenterTab';
 import ProgressTrackerTab from './components/ProgressTrackerTab';
 import WeeklyTestTab from './components/WeeklyTestTab';
 import FloatingAskAI from './components/FloatingAskAI';
+import NewspaperMapperTab from './components/NewspaperMapperTab';
 
 const LOCAL_STORAGE_KEY = 'cseguide_state_v1';
 
@@ -123,7 +124,7 @@ const INITIAL_STATE: UPSCState = {
 
 export default function App() {
   const [state, setState] = useState<UPSCState>(INITIAL_STATE);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'progress' | 'reader' | 'leitner' | 'import' | 'settings' | 'weekly-test'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'progress' | 'reader' | 'leitner' | 'import' | 'settings' | 'weekly-test' | 'newspaper-mapper'>('dashboard');
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [initialSectionId, setInitialSectionId] = useState<string | undefined>(undefined);
   const [initialReaderTab, setInitialReaderTab] = useState<string | undefined>(undefined);
@@ -904,6 +905,7 @@ export default function App() {
               { id: 'progress', label: 'Progress Matrix', icon: Award },
               { id: 'leitner', label: 'Leitner Revision', icon: Compass },
               { id: 'weekly-test', label: 'Weekly Test', icon: CalendarCheck },
+              { id: 'newspaper-mapper', label: 'Newspaper Mapper', icon: Newspaper },
               { id: 'settings', label: 'Settings', icon: Settings }
             ].map(item => {
               const Icon = item.icon;
@@ -1324,6 +1326,10 @@ export default function App() {
               setActiveTab('reader');
             }}
           />
+        )}
+
+        {activeTab === 'newspaper-mapper' && (
+          <NewspaperMapperTab />
         )}
 
       </main>
