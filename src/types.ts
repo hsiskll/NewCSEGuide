@@ -64,6 +64,53 @@ export interface PYQQuestion {
   topic_tags?: string[];
 }
 
+export interface FormulaItem {
+  name: string;
+  formula: string;
+  variables?: Record<string, string>;
+  example?: string;
+}
+
+export interface CaseLawItem {
+  case_name: string;
+  year: number | string;
+  court?: string;
+  holding: string;
+  upsc_relevance?: string;
+}
+
+export interface MnemonicItem {
+  title: string;
+  type: string; // 'acronym' | 'rhyme' | 'story' | 'visual'
+  content: string;
+  covers: string;
+}
+
+export interface ComparisonRow {
+  attribute: string;
+  left: string;
+  right: string;
+}
+
+export interface ComparisonTable {
+  title: string;
+  left_label: string;
+  right_label: string;
+  rows: ComparisonRow[];
+}
+
+export interface TimelineEvent {
+  year: number | string;
+  event: string;
+  significance?: string;
+}
+
+export interface SeeAlsoReference {
+  chapter_number: number;
+  topic_id: string;
+  label: string;
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -81,6 +128,15 @@ export interface Topic {
   ca_angles?: string[];
   lesson_slides?: LessonSlide[];
   section_heading?: string;
+  
+  // New schema fields
+  pre_test_mcq_ids?: string[];
+  formula_box?: FormulaItem[];
+  case_law?: CaseLawItem[];
+  mnemonics?: MnemonicItem[];
+  comparisons?: ComparisonTable[];
+  timeline?: TimelineEvent[];
+  see_also?: SeeAlsoReference[];
 }
 
 export interface Chapter {
@@ -102,6 +158,8 @@ export interface Flashcard {
   id: string;
   chapterId?: string;
   topicId?: string;
+  chapterTitle?: string;
+  topicTitle?: string;
   front: string;
   back: string;
   subject: string;
@@ -184,6 +242,43 @@ export interface PersonalGoal {
   createdAt: string;
 }
 
+export interface MockSessionQuestion {
+  question: string;
+  options: string[];
+  userAnswer: string;
+  correctAnswer: string;
+  explanation: string;
+}
+
+export interface MockSession {
+  id: string;
+  date: string;
+  subject: string;
+  totalQuestions: number;
+  score: number; // Correct answers
+  accuracy: number;
+  timeTaken: number; // in seconds
+  wrongQuestions: MockSessionQuestion[];
+}
+
+export interface WeeklyTestSession {
+  id: string;
+  date: string;
+  chapterIds: string[];
+  totalQuestions: number;
+  correctAnswers: number;
+  accuracy: number;
+  timeTaken: number; // in seconds
+  questions: {
+    questionId: string;
+    type: 'mcq' | 'pyq';
+    questionText: string;
+    selectedAnswer: string;
+    correctAnswer: string;
+    isCorrect: boolean;
+  }[];
+}
+
 export interface UPSCState {
   folders: Folder[];
   chapters: Chapter[];
@@ -199,6 +294,9 @@ export interface UPSCState {
     streak: number;
     lastReviewedDate?: string; // YYYY-MM-DD
   };
+  completedChapters?: Record<string, string>; // chapterId -> YYYY-MM-DD completion date
+  mockSessions?: MockSession[]; // Saved mock sessions
+  weeklyTests?: WeeklyTestSession[]; // Saved weekly tests
 }
 
 export interface MCQItem {
@@ -210,4 +308,4 @@ export interface MCQItem {
   source: 'ai' | 'import';
 }
 
-export type ThemeKey = 'scholar' | 'manuscript' | 'midnight' | 'slate' | 'paper';
+export type ThemeKey = 'newspaper' | 'white' | 'obsidian';

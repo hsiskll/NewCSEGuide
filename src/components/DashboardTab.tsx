@@ -8,16 +8,13 @@ import { UPSCState, Chapter, Topic, Bookmark as BookmarkType, PlannerTask, Daily
 
 interface DashboardTabProps {
   state: UPSCState;
-  onNavigateToChapter: (chapterId: string, sectionId?: string) => void;
+  onNavigateToChapter: (chapterId: string, sectionId?: string, tabId?: string) => void;
   onNavigateToLeitner: () => void;
   onNavigateToSubject?: (paper: string) => void;
   onUpdateState?: (updatedState: UPSCState) => void;
 }
 
 export default function DashboardTab({ state, onNavigateToChapter, onNavigateToLeitner, onNavigateToSubject, onUpdateState }: DashboardTabProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<{ chapter: Chapter; topic: Topic; snippet: string }[]>([]);
-
   // Calculate Streak & Today's Study Time
   const todayStr = new Date().toISOString().split('T')[0]; // "2026-06-25"
   const logs = state.logs || [];
@@ -380,52 +377,125 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
     return `${getOrdinal(dayNum)} ${monthName} ${d.getFullYear()}, ${dayName.substring(0, 3)}`;
   };
 
-  // Handle Global Search across all folders and chapter texts
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    if (!query.trim() || query.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
-    const term = query.toLowerCase();
-    const results: { chapter: Chapter; topic: Topic; snippet: string }[] = [];
-
-    (state.chapters || []).forEach(chapter => {
-      const topics = chapter.topics || [];
-      topics.forEach(topic => {
-        const titleMatch = topic.title.toLowerCase().includes(term);
-        const fullText = topic.full_text || topic.raw_text || "";
-        const bodyMatch = fullText.toLowerCase().includes(term);
-
-        if (titleMatch || bodyMatch) {
-          // Generate an elegant context snippet
-          let snippet = '';
-          if (bodyMatch) {
-            const idx = fullText.toLowerCase().indexOf(term);
-            const start = Math.max(0, idx - 40);
-            const end = Math.min(fullText.length, idx + term.length + 60);
-            snippet = (start > 0 ? '...' : '') + fullText.substring(start, end).replace(/\n/g, ' ') + (end < fullText.length ? '...' : '');
-          } else {
-            snippet = fullText.substring(0, 100).replace(/\n/g, ' ') + '...';
-          }
-
-          results.push({
-            chapter,
-            topic,
-            snippet
-          });
-        }
-      });
-    });
-
-    setSearchResults(results.slice(0, 8)); // limit to top 8 matches
-  };
-
   // Group chapters by subject
   const getSubjectCounts = (subj: string) => {
     return (state.chapters || []).filter(c => c.subject?.toLowerCase() === subj.toLowerCase()).length;
   };
+
+  // Calculate Intelligent Daily Queue recommendations
+  const intelligentQueue = React.useMemo(() => {
+    const queue: Array<{
+      id: string;
+      type: 'leitner' | 'gap_read' | 'gap_test' | 'planner';
+      title: string;
+      subtitle: string;
+      subject?: string;
+      chapterId?: string;
+      topicId?: string;
+      tabId?: string;
+      meta?: string;
+    }> = [];
+
+    // 1. Spaced-Repetition Cards due
+    if (dueCards && dueCards.length > 0) {
+      const chapterCardCount: Record<string, number> = {};
+      dueCards.forEach(c => {
+        if (c.chapterId) {
+          chapterCardCount[c.chapterId] = (chapterCardCount[c.chapterId] || 0) + 1;
+        }
+      });
+
+      Object.entries(chapterCardCount).forEach(([chId, count]) => {
+        const ch = (state.chapters || []).find(c => c.id === chId);
+        if (ch) {
+          queue.push({
+            id: `leitner_queue_${chId}`,
+            type: 'leitner',
+            title: `Spaced-Repetition: ${ch.title}`,
+            subtitle: `${count} card(s) due for active retention review today.`,
+            subject: ch.subject,
+            chapterId: chId,
+            tabId: 'cards',
+            meta: `${count} Cards Due`
+          });
+        }
+      });
+    }
+
+    // 2. Topics with Gaps (low accuracy (< 70%) or unread but marked as target)
+    (state.chapters || []).forEach(ch => {
+      (ch.topics || []).forEach(tp => {
+        const prog = state.topicProgress?.[tp.id];
+        
+        // Gap type A: marked as study target but has not been read yet
+        if (!prog?.read) {
+          const isPlanned = planner[todayStr]?.targets?.some(t => t.chapterId === ch.id);
+          if (isPlanned) {
+            queue.push({
+              id: `gap_read_${tp.id}`,
+              type: 'gap_read',
+              title: `Primary Study: ${tp.title}`,
+              subtitle: `Prerequisite reading gap identified for your scheduled target chapter today.`,
+              subject: ch.subject,
+              chapterId: ch.id,
+              topicId: tp.id,
+              tabId: 'read',
+              meta: `Incomplete Read`
+            });
+          }
+        }
+
+        // Gap type B: solved MCQs but accuracy is low (< 70%)
+        if (prog?.mcqAttempts) {
+          let total = 0;
+          let correct = 0;
+          (Object.values(prog.mcqAttempts) as any[]).forEach(attempts => {
+            if (attempts && attempts.length > 0) {
+              total++;
+              if (attempts[attempts.length - 1].isCorrect) {
+                correct++;
+              }
+            }
+          });
+
+          if (total > 0) {
+            const acc = (correct / total) * 100;
+            if (acc < 70) {
+              queue.push({
+                id: `gap_test_${tp.id}`,
+                type: 'gap_test',
+                title: `Diagnostic Patch: ${tp.title}`,
+                subtitle: `Accuracy is currently at ${Math.round(acc)}%. Launch practice drill to master this gap.`,
+                subject: ch.subject,
+                chapterId: ch.id,
+                topicId: tp.id,
+                tabId: 'mcq',
+                meta: `${Math.round(acc)}% Accuracy`
+              });
+            }
+          }
+        }
+      });
+    });
+
+    // 3. Planner tasks set for today
+    const todayTasks = planner[todayStr]?.targets || [];
+    todayTasks.forEach(task => {
+      if (!task.completed) {
+        queue.push({
+          id: `task_queue_${task.id}`,
+          type: 'planner',
+          title: `Daily Goal: ${task.text}`,
+          subtitle: `Incomplete planner target scheduled for today's revision ledger.`,
+          chapterId: task.chapterId,
+          tabId: 'read',
+          meta: `Pending Target`
+        });
+      }
+    });
+
+    return queue.slice(0, 4);
+  }, [state.chapters, state.topicProgress, dueCards, planner, todayStr]);
 
   return (
     <div id="dashboard_tab" className="space-y-6 text-left">
@@ -447,8 +517,8 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
                 {formattedDay}, {formattedDate}
               </span>
             </div>
-            <p className="text-xs text-[var(--t2)] mt-1 max-w-xl font-serif italic">
-              Target Year: <strong className="text-[var(--gd)] font-sans not-italic">{state.settings?.goal?.targetYear || '2026'}</strong> | Focus Area: <strong className="text-[var(--gd)] font-sans not-italic">{state.settings?.goal?.focusArea || 'Indian Polity'}</strong>
+            <p className="text-xs text-[var(--t2)] mt-1.5 max-w-xl font-serif italic">
+              "Do not waste your time looking for an obstacle - maybe there is none." — Franz Kafka
             </p>
           </div>
           
@@ -469,57 +539,60 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
         </div>
       </div>
 
-      {/* Global Search Bar */}
-      <div className="bg-[var(--sur)] p-4 rounded-3xl border border-[var(--bd)] relative">
-        <label className="block text-xs font-bold uppercase tracking-wider text-[var(--t2)] mb-2">Search UPSC Repository</label>
-        <div className="relative">
-          <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-[var(--t3)]" />
-          <input 
-            type="text"
-            className="w-full bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] rounded-2xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
-            placeholder="Search key terms (e.g. 'President', 'Veto', 'Electoral', 'Articles')..."
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-          />
-        </div>
-
-        {/* Search Results Dropdown */}
-        {searchResults.length > 0 && (
-          <div className="absolute left-0 right-0 mt-2 bg-[var(--sur)] border border-[var(--bd)] rounded-2xl shadow-lg z-30 max-h-96 overflow-y-auto divide-y divide-[var(--bd)]">
-            <div className="p-2.5 bg-[var(--ra)] text-[var(--t1)] text-xs font-mono font-semibold flex justify-between items-center">
-              <span>{searchResults.length} UPSC references found:</span>
-              <button onClick={() => { setSearchQuery(''); setSearchResults([]); }} className="text-[var(--gd)] hover:underline">Clear</button>
+      {/* Intelligent Daily Study Queue */}
+      {intelligentQueue.length > 0 && (
+        <div id="intelligent_daily_queue" className="bg-[var(--sur)] p-5 rounded-3xl border border-[var(--bd)] space-y-4 animate-fade-in shadow-3xs">
+          <div className="flex justify-between items-center border-b border-[var(--bd)] pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-[var(--gd)] animate-pulse" />
+              <div>
+                <h2 className="font-serif font-bold text-base text-[var(--t1)]">Intelligent Study Queue</h2>
+                <p className="text-[10px] uppercase font-bold tracking-wider text-[var(--t3)] font-mono">Algorithmic study recommendations for optimized UPSC preparation</p>
+              </div>
             </div>
-            {searchResults.map((res, idx) => (
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {intelligentQueue.map(item => (
               <div 
-                key={idx}
-                onClick={() => {
-                  onNavigateToChapter(res.chapter.id, res.topic.id);
-                  setSearchQuery('');
-                  setSearchResults([]);
-                }}
-                className="p-3 hover:bg-[var(--ra)] cursor-pointer transition text-left group"
+                key={item.id} 
+                className="bg-[var(--ra)]/40 hover:bg-[var(--ra)] border border-[var(--bd)] rounded-2xl p-4 flex flex-col justify-between gap-4 transition duration-200"
               >
-                <div className="flex justify-between items-start gap-2">
-                  <h4 className="text-xs font-bold text-[var(--t1)] group-hover:text-[var(--gd)] transition">
-                    {res.topic.title}
-                  </h4>
-                  <span className="text-[9px] uppercase tracking-wider font-mono bg-[var(--ra)] border border-[var(--bd)] text-[var(--gd)] px-1.5 py-0.5 rounded-lg shrink-0">
-                    {res.chapter.subject}
-                  </span>
+                <div className="space-y-1.5 text-left">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full bg-[var(--gd)]/10 text-[var(--gd)] border border-[var(--gd)]/20">
+                      {item.meta}
+                    </span>
+                    {item.subject && (
+                      <span className="text-[9px] font-mono text-[var(--t3)] uppercase font-semibold">
+                        {item.subject}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-serif font-bold text-xs sm:text-sm text-[var(--t1)] leading-snug line-clamp-1">{item.title}</h3>
+                  <p className="text-[10px] sm:text-xs text-[var(--t2)] font-serif leading-relaxed line-clamp-2">{item.subtitle}</p>
                 </div>
-                <p className="text-[10px] text-[var(--t3)] mt-0.5">Chapter: {res.chapter.title}</p>
-                <p className="text-xs text-[var(--t2)] font-serif italic mt-1 bg-[var(--ra)] p-1.5 rounded-xl border-l-2 border-[var(--gd)]">
-                  {res.snippet}
-                </p>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={() => {
+                      if (item.type === 'leitner') {
+                        onNavigateToLeitner();
+                      } else if (item.chapterId) {
+                        onNavigateToChapter(item.chapterId, item.topicId, item.tabId);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-[var(--gd)] hover:text-[var(--gd)]/80 tracking-wider transition cursor-pointer"
+                  >
+                    <span>Launch Segment</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-        )}
-        {searchQuery && searchResults.length === 0 && (
-          <p className="text-xs text-[var(--t3)] italic mt-2">Type 2 or more letters to query all chapters...</p>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Scholar's Journal & Planner (Monthly/Weekly style) */}
       <div id="scholars_journal_planner" className="bg-[var(--sur)] p-5 rounded-3xl border border-[var(--bd)] space-y-4">
@@ -876,28 +949,8 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
                         if (!folder || !chapter) return;
                         
                         if (goalSubsection === 'ALL') {
-                          const subOptions = ['Read Section', 'Lesson Slides', 'Key Concepts', 'Flashcards', 'PYQs', 'MCQ Practice', 'Mains Answer Draft', 'Current Affairs', 'Notes'];
-                          const currentPlanner = { ...planner };
-                          const dayPlanner = currentPlanner[selectedDateStr] || { date: selectedDateStr, targets: [] };
-                          
-                          const newTasks = subOptions.map(sub => ({
-                            id: Math.random().toString(36).substring(2, 11),
-                            text: `[${sub}] ${folder.name}: ${chapter.title}`,
-                            completed: false,
-                            chapterId: chapter.id,
-                            subject: folder.name,
-                            subsection: sub
-                          }));
-                          
-                          dayPlanner.targets = [...dayPlanner.targets, ...newTasks];
-                          currentPlanner[selectedDateStr] = dayPlanner;
-                          
-                          if (onUpdateState) {
-                            onUpdateState({
-                              ...state,
-                              planner: currentPlanner
-                            });
-                          }
+                          const taskText = `${chapter.title}- ALL`;
+                          handleAddTask(selectedDateStr, taskText, chapter.id, folder.name, 'ALL');
                         } else {
                           const taskText = `[${goalSubsection}] ${folder.name}: ${chapter.title}`;
                           handleAddTask(selectedDateStr, taskText, chapter.id, folder.name, goalSubsection);

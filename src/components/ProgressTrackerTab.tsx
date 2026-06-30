@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Award, BookOpen, Layers, Sparkles, CheckCircle2, 
   HelpCircle, FileText, ChevronDown, ChevronRight, Check,
-  BookMarked, BrainCircuit, PenTool, Lightbulb, MessageSquare, StickyNote
+  BookMarked, BrainCircuit, PenTool, Lightbulb, MessageSquare, StickyNote,
+  AlertCircle, Zap
 } from 'lucide-react';
 import { Folder, Chapter, Topic, TopicProgress } from '../types';
 
@@ -11,13 +12,15 @@ interface ProgressTrackerTabProps {
   chapters: Chapter[];
   topicProgress: Record<string, TopicProgress>;
   onToggleProgress?: (topicId: string, field: keyof TopicProgress) => void;
+  onNavigateToTopicTab?: (chapterId: string, topicId: string, tab: string) => void;
 }
 
 export default function ProgressTrackerTab({
   folders,
   chapters,
   topicProgress,
-  onToggleProgress
+  onToggleProgress,
+  onNavigateToTopicTab
 }: ProgressTrackerTabProps) {
   const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null);
@@ -126,6 +129,102 @@ export default function ProgressTrackerTab({
           </div>
         </div>
       </div>
+
+      {/* Weak Topic Detection Panel */}
+      {(() => {
+        const weakTopics = React.useMemo(() => {
+          const list: {
+            chapterId: string;
+            chapterTitle: string;
+            topicId: string;
+            topicTitle: string;
+            accuracy: number;
+            attempts: number;
+            lastDate?: string;
+          }[] = [];
+
+          chapters.forEach(ch => {
+            (ch.topics || []).forEach(t => {
+              const prog = topicProgress[t.id];
+              if (prog?.mcqAttempts) {
+                let total = 0;
+                let correct = 0;
+                let latestDateStr = '';
+                Object.values(prog.mcqAttempts).forEach(attempts => {
+                  if (attempts && attempts.length > 0) {
+                    const lastAttempt = attempts[attempts.length - 1];
+                    total++;
+                    if (lastAttempt.isCorrect) correct++;
+                    if (!latestDateStr || lastAttempt.date > latestDateStr) {
+                      latestDateStr = lastAttempt.date;
+                    }
+                  }
+                });
+
+                if (total > 0) {
+                  const accuracy = (correct / total) * 100;
+                  if (accuracy < 60) {
+                    list.push({
+                      chapterId: ch.id,
+                      chapterTitle: ch.title,
+                      topicId: t.id,
+                      topicTitle: t.title,
+                      accuracy,
+                      attempts: total,
+                      lastDate: latestDateStr
+                    });
+                  }
+                }
+              }
+            });
+          });
+
+          // Filter by attempts >= 5, fallback to include lower if sparse
+          const filtered = list.filter(item => item.attempts >= 5);
+          const finalSelection = filtered.length >= 3 ? filtered : list;
+          return finalSelection
+            .sort((a, b) => a.accuracy - b.accuracy || b.attempts - a.attempts)
+            .slice(0, 5);
+        }, [chapters, topicProgress]);
+
+        if (weakTopics.length === 0) return null;
+
+        return (
+          <div className="bg-white rounded-xl border border-red-200 shadow-xs p-5 space-y-4 text-left">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="w-5 h-5 shrink-0 animate-pulse" />
+              <div>
+                <h3 className="font-serif font-bold text-sm text-gray-900 uppercase tracking-wide">Targeted Revision: Weak Topics Detected</h3>
+                <p className="text-[10px] text-gray-500 font-mono">Accuracy below 60% based on active practice attempts</p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {weakTopics.map(item => (
+                <div key={item.topicId} className="p-3.5 rounded-xl bg-red-50/40 border border-red-100 flex flex-col justify-between gap-3 group hover:border-red-300 transition duration-150">
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-[9px] font-mono font-bold uppercase text-red-500 bg-red-100/60 px-1.5 py-0.5 rounded">
+                        {Math.round(item.accuracy)}% Acc ({item.attempts} att)
+                      </span>
+                    </div>
+                    <h4 className="font-sans font-bold text-xs text-gray-900 line-clamp-1 group-hover:text-red-600 transition">{item.topicTitle}</h4>
+                    <p className="text-[10px] text-gray-500 font-serif line-clamp-1">{item.chapterTitle}</p>
+                  </div>
+                  
+                  <button
+                    onClick={() => onNavigateToTopicTab && onNavigateToTopicTab(item.chapterId, item.topicId, 'mcq')}
+                    className="w-full py-1.5 bg-red-600 hover:bg-red-700 text-white font-mono font-bold text-[9px] uppercase tracking-wider rounded-lg transition text-center flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Zap className="w-3 h-3 fill-white" />
+                    Practice Now
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 3. Subject-wise Chapter Progress Breakdown */}
       <div className="space-y-4">

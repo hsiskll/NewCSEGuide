@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { 
   Key, ShieldCheck, Download, Upload, Trash2, Check,
-  AlertCircle, RefreshCw, FileText, Sparkles
+  AlertCircle, RefreshCw, FileText, Sparkles, Palette
 } from 'lucide-react';
 import { getStoredGeminiKey, setStoredGeminiKey, testGeminiConnection, getStoredGeminiModel, setStoredGeminiModel } from '../utils/gemini';
 import { UPSCState } from '../types';
@@ -11,13 +11,37 @@ interface SettingsTabProps {
   onImportFullState: (newState: UPSCState) => void;
   onResetToDemo: () => void;
   onUpdateKey: (key: string) => void;
+  universalFont: string;
+  onUpdateUniversalFont: (font: string) => void;
+  customSecondaryColor?: string;
+  onUpdateCustomSecondaryColor?: (color: string) => void;
 }
+
+const STANDARDS_FONTS = [
+  { name: 'Inter (Sans-Serif - Default)', value: 'Inter, ui-sans-serif, system-ui, sans-serif' },
+  { name: 'System Sans-Serif', value: 'ui-sans-serif, system-ui, sans-serif' },
+  { name: 'Playfair Display (Elegant Serif)', value: '"Playfair Display", serif' },
+  { name: 'Georgia (Classic Serif)', value: 'Georgia, serif' },
+  { name: 'EB Garamond (Elegant Book Serif)', value: '"EB Garamond", serif' },
+  { name: 'Crimson Pro (Warm Academic Serif)', value: '"Crimson Pro", serif' },
+  { name: 'Times New Roman (Academic Serif)', value: '"Times New Roman", Times, serif' },
+  { name: 'Space Grotesk (Modern Tech Sans)', value: '"Space Grotesk", sans-serif' },
+  { name: 'Outfit (Polished Geometric)', value: '"Outfit", sans-serif' },
+  { name: 'JetBrains Mono (Developer Monospace)', value: '"JetBrains Mono", monospace' },
+  { name: 'Fira Code (Modern Monospace)', value: '"Fira Code", monospace' },
+  { name: 'Courier New (Classic Monospace)', value: '"Courier New", Courier, monospace' },
+  { name: 'Arial (Neutral Sans)', value: 'Arial, Helvetica, sans-serif' }
+];
 
 export default function SettingsTab({
   state,
   onImportFullState,
   onResetToDemo,
-  onUpdateKey
+  onUpdateKey,
+  universalFont,
+  onUpdateUniversalFont,
+  customSecondaryColor = '',
+  onUpdateCustomSecondaryColor
 }: SettingsTabProps) {
   const [apiKey, setApiKey] = useState(getStoredGeminiKey());
   const [selectedModel, setSelectedModel] = useState(getStoredGeminiModel());
@@ -222,6 +246,270 @@ export default function SettingsTab({
               <span>Authentication failed. Please verify that your Gemini API key is valid and supports the selected model ({selectedModel}).</span>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Universal Font Styling Option */}
+      <div className="bg-white p-5 rounded-lg border border-brand-navy/10 shadow-sm space-y-4">
+        <div className="flex items-center gap-2 border-b border-brand-navy/5 pb-2">
+          <FileText className="w-5 h-5 text-brand-gold" />
+          <h3 className="font-display font-bold text-sm uppercase text-brand-navy">Universal Font Styling</h3>
+        </div>
+
+        <p className="text-xs text-brand-slate font-serif leading-relaxed">
+          Universally change the font family across the entire application workspace. Select your preferred reading typography to reduce eye strain during extended UPSC study sessions.
+        </p>
+
+        <div className="space-y-3 pt-2">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-brand-navy mb-1.5">Select App Typography</label>
+            <select
+              className="w-full bg-brand-cream border border-brand-navy/25 rounded p-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-gold text-brand-navy cursor-pointer font-medium"
+              value={universalFont}
+              onChange={(e) => onUpdateUniversalFont(e.target.value)}
+            >
+              {STANDARDS_FONTS.map(font => (
+                <option key={font.value} value={font.value}>{font.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="p-3 bg-brand-cream/50 rounded-xl border border-brand-navy/5 mt-2">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-brand-slate font-bold block mb-1">Live Typography Preview:</span>
+            <p style={{ fontFamily: universalFont }} className="text-sm leading-relaxed text-brand-navy">
+              "The Constitution of India is the supreme law of India. The document lays down the framework that demarcates fundamental political code, structure, procedures, powers, and duties of government institutions."
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Custom Secondary / Accent Color Option */}
+      <div className="bg-white p-5 rounded-lg border border-brand-navy/10 shadow-sm space-y-5 animate-fade-in">
+        <div className="flex items-center gap-2 border-b border-brand-navy/5 pb-2">
+          <Palette className="w-5 h-5 text-[var(--gd)]" />
+          <h3 className="font-display font-bold text-sm uppercase text-brand-navy">Custom Secondary Accent Color</h3>
+        </div>
+
+        <p className="text-xs text-brand-slate font-serif leading-relaxed">
+          Customize the secondary highlight/accent color (<strong className="font-mono">var(--gd)</strong>) applied to headers, buttons, current active items, and dashboard charts. 
+        </p>
+
+        <div className="space-y-4 pt-1">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-brand-navy mb-2">Choose Accent Preset</label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { name: 'Historical Maroon', value: '#8C2222', desc: 'Old Newspaper Default' },
+                { name: 'Imperial Blue', value: '#1E3A8A', desc: 'Pristine White Default' },
+                { name: 'Aura Violet', value: '#9F7AEA', desc: 'Obsidian Default' },
+                { name: 'Syllabus Teal', value: '#14B8A6', desc: 'Calming Study' },
+                { name: 'Saffron Gold', value: '#C59B27', desc: 'Classic Scholar' },
+                { name: 'Amber Glow', value: '#D97706', desc: 'High Visibility' },
+                { name: 'Emerald Focus', value: '#10B981', desc: 'Balanced Green' },
+                { name: 'Rose Petal', value: '#EC4899', desc: 'Bright Pastel' }
+              ].map(preset => {
+                const isSelected = customSecondaryColor === preset.value;
+                return (
+                  <button
+                    key={preset.value}
+                    onClick={() => onUpdateCustomSecondaryColor?.(preset.value)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition text-xs font-medium cursor-pointer ${
+                      isSelected 
+                        ? 'bg-[var(--gd)] text-[var(--bg)] border-transparent scale-105 shadow-md font-bold'
+                        : 'bg-brand-cream hover:bg-gray-50 border-brand-navy/10 text-brand-navy'
+                    }`}
+                  >
+                    <span 
+                      className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0" 
+                      style={{ backgroundColor: preset.value }}
+                    />
+                    <span>{preset.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Continuous Color Spectrum Picker */}
+          <div className="p-4 rounded-xl border border-brand-navy/5 bg-brand-cream/30 space-y-4">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-navy flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--gd)] animate-pulse" />
+              Continuous Spectrum Tuner
+            </h4>
+
+            {(() => {
+              // Parse current color or fallback to a default royal blue
+              const currHex = customSecondaryColor || '#1E3A8A';
+              
+              // Helper to parse hex to HSL
+              const hexToHsl = (hexStr: string) => {
+                let hex = hexStr.replace('#', '');
+                if (hex.length === 3) {
+                  hex = hex.split('').map(c => c + c).join('');
+                }
+                const r = parseInt(hex.substring(0, 2), 16) / 255 || 0;
+                const g = parseInt(hex.substring(2, 4), 16) / 255 || 0;
+                const b = parseInt(hex.substring(4, 6), 16) / 255 || 0;
+
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                let h = 0;
+                let s = 0;
+                const l = (max + min) / 2;
+
+                if (max !== min) {
+                  const d = max - min;
+                  s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                  switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                  }
+                  h /= 6;
+                }
+
+                return {
+                  h: Math.round(h * 360),
+                  s: Math.round(s * 100),
+                  l: Math.round(l * 100)
+                };
+              };
+
+              // Helper to convert HSL to Hex
+              const hslToHex = (h: number, s: number, l: number): string => {
+                const hDecimal = h / 360;
+                const sDecimal = s / 100;
+                const lDecimal = l / 100;
+                let r = 0, g = 0, b = 0;
+                if (sDecimal === 0) {
+                  r = g = b = lDecimal;
+                } else {
+                  const hue2rgb = (p: number, q: number, t: number) => {
+                    if (t < 0) t += 1;
+                    if (t > 1) t -= 1;
+                    if (t < 1/6) return p + (q - p) * 6 * t;
+                    if (t < 1/2) return q;
+                    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                    return p;
+                  };
+                  const q = lDecimal < 0.5 ? lDecimal * (1 + sDecimal) : lDecimal + sDecimal - lDecimal * sDecimal;
+                  const p = 2 * lDecimal - q;
+                  r = hue2rgb(p, q, hDecimal + 1/3);
+                  g = hue2rgb(p, q, hDecimal);
+                  b = hue2rgb(p, q, hDecimal - 1/3);
+                }
+                const toHex = (x: number) => {
+                  const hex = Math.round(x * 255).toString(16);
+                  return hex.length === 1 ? '0' + hex : hex;
+                };
+                return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+              };
+
+              const hsl = hexToHsl(currHex);
+
+              const handleHslChange = (newH: number, newS: number, newL: number) => {
+                const hexResult = hslToHex(newH, newS, newL);
+                onUpdateCustomSecondaryColor?.(hexResult);
+              };
+
+              return (
+                <div className="space-y-4">
+                  {/* Spectrum Track Selector */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px] font-bold text-brand-navy">
+                      <span>Hue Spectrum</span>
+                      <span className="font-mono text-[var(--gd)] font-bold">{hsl.h}°</span>
+                    </div>
+                    <div className="relative flex items-center h-5">
+                      <div 
+                        className="absolute inset-x-0 h-2.5 rounded-full shadow-inner" 
+                        style={{
+                          background: 'linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)'
+                        }}
+                      />
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        value={hsl.h}
+                        onChange={(e) => handleHslChange(parseInt(e.target.value), hsl.s, hsl.l)}
+                        className="w-full h-full appearance-none bg-transparent cursor-pointer relative z-10 accent-white [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-brand-navy/60 [&::-webkit-slider-thumb]:shadow-md"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Saturation Slider */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px] font-bold text-brand-navy">
+                      <span>Color Intensity / Saturation</span>
+                      <span className="font-mono">{hsl.s}%</span>
+                    </div>
+                    <div className="relative flex items-center h-5">
+                      <div 
+                        className="absolute inset-x-0 h-2.5 rounded-full shadow-inner" 
+                        style={{
+                          background: `linear-gradient(to right, ${hslToHex(hsl.h, 0, 50)} 0%, ${hslToHex(hsl.h, 100, 50)} 100%)`
+                        }}
+                      />
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        value={hsl.s}
+                        onChange={(e) => handleHslChange(hsl.h, parseInt(e.target.value), hsl.l)}
+                        className="w-full h-full appearance-none bg-transparent cursor-pointer relative z-10 accent-white [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-brand-navy/60 [&::-webkit-slider-thumb]:shadow-md"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Lightness Slider */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px] font-bold text-brand-navy">
+                      <span>Brightness / Lightness</span>
+                      <span className="font-mono">{hsl.l}%</span>
+                    </div>
+                    <div className="relative flex items-center h-5">
+                      <div 
+                        className="absolute inset-x-0 h-2.5 rounded-full shadow-inner" 
+                        style={{
+                          background: `linear-gradient(to right, #000000 0%, ${hslToHex(hsl.h, hsl.s, 50)} 50%, #ffffff 100%)`
+                        }}
+                      />
+                      <input
+                        type="range"
+                        min="15"
+                        max="85"
+                        value={hsl.l}
+                        onChange={(e) => handleHslChange(hsl.h, hsl.s, parseInt(e.target.value))}
+                        className="w-full h-full appearance-none bg-transparent cursor-pointer relative z-10 accent-white [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-brand-navy/60 [&::-webkit-slider-thumb]:shadow-md"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 pt-2 border-t border-brand-navy/5">
+            <div className="flex items-center gap-2.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-brand-navy shrink-0">Native Color Picker:</label>
+              <input
+                type="color"
+                value={customSecondaryColor || '#1E3A8A'}
+                onChange={(e) => onUpdateCustomSecondaryColor?.(e.target.value)}
+                className="w-10 h-8 rounded border border-brand-navy/10 cursor-pointer p-0 bg-transparent"
+              />
+              <span className="text-xs font-mono font-bold text-brand-navy">{customSecondaryColor || 'Theme Default'}</span>
+            </div>
+
+            {customSecondaryColor && (
+              <button
+                onClick={() => onUpdateCustomSecondaryColor?.('')}
+                className="text-xs font-bold text-red-600 hover:text-red-800 transition py-1 px-2.5 rounded hover:bg-red-50 border border-transparent hover:border-red-100 cursor-pointer"
+              >
+                Reset to Theme Default Color
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

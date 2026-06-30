@@ -3,7 +3,7 @@ import {
   BookOpen, Type, Sparkles, Bookmark, BookmarkCheck,
   ChevronLeft, ChevronRight, Menu, ZoomIn, ZoomOut,
   Sliders, Award, RefreshCw, Layers, CheckCircle2,
-  BookMarked, HelpCircle, FileText, Compass, Clock,
+  BookMarked, HelpCircle, FileText, Compass, Clock, Check,
   ArrowLeft, BrainCircuit, PenTool, Globe, ChevronDown, ChevronUp, Eye, EyeOff, Upload,
   Highlighter, Trash2, X, Undo2
 } from 'lucide-react';
@@ -20,6 +20,25 @@ if (typeof window !== 'undefined') {
 interface SavedHighlight {
   text: string;
   color: 'yellow' | 'green' | 'pink';
+  pIdx?: number;
+  start?: number;
+  end?: number;
+  note?: string;
+}
+
+function getSelectionCharacterOffsetWithin(element: HTMLElement) {
+  let start = 0;
+  let end = 0;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    const preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(element);
+    preCaretRange.setEnd(range.startContainer, range.startOffset);
+    start = preCaretRange.toString().length;
+    end = start + range.toString().length;
+  }
+  return { start, end };
 }
 
 interface ChapterReaderTabProps {
@@ -33,6 +52,12 @@ interface ChapterReaderTabProps {
   zenMode?: boolean;
   onToggleZenMode?: () => void;
   preferences?: any;
+  isChapterCompleted?: boolean;
+  onToggleChapterComplete?: (complete: boolean) => void;
+  initialSectionId?: string;
+  initialTab?: string;
+  onClearNavigationParams?: () => void;
+  onNavigateToTopic?: (chapterNumber: number, topicId: string, tab: string) => void;
 }
 
 const DEFAULT_OFFLINE_MCQS: Record<string, MCQItem[]> = {
@@ -56,6 +81,72 @@ const DEFAULT_OFFLINE_MCQS: Record<string, MCQItem[]> = {
   ]
 };
 
+const renderSlideContent = (content: string, baseFontSize: number) => {
+  if (!content) return null;
+
+  // Split content by newlines
+  const lines = content.split('\n');
+
+  // Helper to parse **bold** text inside a line and return React elements
+  const parseInlineBold = (text: string) => {
+    const parts = text.split(/\*\*([^*]+)\*\*/g);
+    return parts.map((part, index) => {
+      // Every odd index is a captured group inside **...**
+      if (index % 2 === 1) {
+        return <strong key={index} className="font-bold text-[var(--t1)]">{part}</strong>;
+      }
+      return part;
+    });
+  };
+
+  return (
+    <div className="space-y-2 font-serif text-[var(--t2)] leading-relaxed">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+
+        // 1. Empty lines
+        if (trimmed === '') {
+          return <div key={idx} className="h-2" />;
+        }
+
+        // 2. Bold section subheadings: ALL-CAPS (at least 3 characters and no lowercase) or ending with :
+        const isAllCaps = trimmed.length >= 3 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed);
+        const endsWithColon = trimmed.endsWith(':');
+
+        if (isAllCaps || endsWithColon) {
+          return (
+            <h4 key={idx} className="font-sans font-bold text-[var(--gd)] tracking-wide mt-3 mb-1" style={{ fontSize: `${baseFontSize * 1.05}px` }}>
+              {parseInlineBold(trimmed)}
+            </h4>
+          );
+        }
+
+        // 3. Bullet items: lines starting with • ✓ ✗ → - * or a number (e.g., 1. or 1)
+        const bulletRegex = /^([•✓✗→\-*]|\d+\.?)\s*(.*)$/;
+        const match = trimmed.match(bulletRegex);
+
+        if (match) {
+          const bulletSymbol = match[1];
+          const restOfLine = match[2];
+          return (
+            <div key={idx} className="flex items-start gap-2.5 pl-2 my-1">
+              <span className="text-[var(--gd)] font-bold font-sans shrink-0">{bulletSymbol}</span>
+              <p className="flex-1">{parseInlineBold(restOfLine)}</p>
+            </div>
+          );
+        }
+
+        // 4. Normal paragraph
+        return (
+          <p key={idx} className="leading-relaxed">
+            {parseInlineBold(trimmed)}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
 export default function ChapterReaderTab({
   chapter,
   bookmarks,
@@ -65,16 +156,52 @@ export default function ChapterReaderTab({
   savedProgress,
   onSaveProgress,
   zenMode = false,
-  onToggleZenMode
+  onToggleZenMode,
+  isChapterCompleted = false,
+  onToggleChapterComplete,
+  initialSectionId,
+  initialTab,
+  onClearNavigationParams,
+  onNavigateToTopic
 }: ChapterReaderTabProps) {
+  // Handle cross-topic or initial navigation parameters
+  useEffect(() => {
+    if (chapter?.topics) {
+      if (initialSectionId) {
+        const topicIdx = chapter.topics.findIndex(t => t.id === initialSectionId);
+        if (topicIdx !== -1) {
+          setActiveTopicIdx(topicIdx);
+        }
+      }
+      if (initialTab) {
+        const validTabs = ['read', 'lesson', 'concepts', 'cards', 'pyq', 'mcq', 'practice', 'ca', 'notes'];
+        if (validTabs.includes(initialTab)) {
+          setActiveTab(initialTab as any);
+        }
+      }
+      if (onClearNavigationParams) {
+        onClearNavigationParams();
+      }
+    }
+  }, [initialSectionId, initialTab, chapter?.id]);
+
   // Reading Font preference
   const [fontFamily, setFontFamily] = useState<'serif' | 'sans' | 'mono'>('serif');
   const [fontSize, setFontSize] = useState<number>(18);
   const [lineSpacing, setLineSpacing] = useState<number>(1.6);
 
   const getTabFontSize = (tab: string, baseSize: number) => {
+    if (tab === 'mcq' || tab === 'pyq') {
+      if (baseSize <= 18) return 16;
+      if (baseSize <= 22) return 18;
+      if (baseSize <= 26) return 20;
+      return 22;
+    }
     if (tab === 'read') return Math.max(18, baseSize);
-    return Math.max(21, baseSize);
+    if (tab === 'concepts' || tab === 'lesson' || tab === 'practice' || tab === 'ca' || tab === 'notes' || tab === 'cards') {
+      return baseSize;
+    }
+    return Math.max(18, baseSize);
   };
 
   // Highlight states
@@ -83,6 +210,19 @@ export default function ChapterReaderTab({
   const [showHighlightPopup, setShowHighlightPopup] = useState(false);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
   const [selectedText, setSelectedText] = useState('');
+  const [selectionDetails, setSelectionDetails] = useState<{ pIdx: number; start: number; end: number } | null>(null);
+
+  // States for Custom Selection Menu, AI & Note Annotations
+  const [popupTab, setPopupTab] = useState<'highlight' | 'ai' | 'note'>('highlight');
+  const [aiPopupQuery, setAiPopupQuery] = useState('');
+  const [aiPopupLoading, setAiPopupLoading] = useState(false);
+  const [aiPopupResult, setAiPopupResult] = useState('');
+  const [customNoteText, setCustomNoteText] = useState('');
+  const [customNoteColor, setCustomNoteColor] = useState<'yellow' | 'green' | 'pink'>('yellow');
+  const [activeNoteHighlight, setActiveNoteHighlight] = useState<SavedHighlight | null>(null);
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [editingNoteText, setEditingNoteText] = useState('');
+  const [targetFlashParagraph, setTargetFlashParagraph] = useState<number | null>(null);
 
   // Layout states
   const [activeTopicIdx, setActiveTopicIdx] = useState<number>(0);
@@ -91,6 +231,91 @@ export default function ChapterReaderTab({
   
   // Interactive Topic contents
   const currentTopic: Topic | undefined = (chapter && chapter.topics) ? (chapter.topics[activeTopicIdx] || chapter.topics[0]) : undefined;
+
+  // Diagnostic gating state and helpers
+  const [diagnosticAnswers, setDiagnosticAnswers] = useState<Record<string, string>>({});
+
+  const isPreTestPassed = () => {
+    if (!currentTopic?.pre_test_mcq_ids || currentTopic.pre_test_mcq_ids.length === 0) {
+      return true;
+    }
+    return currentTopic.pre_test_mcq_ids.every(mcqId => {
+      return Object.values(savedProgress || {}).some(prog => {
+        const attempts = prog.mcqAttempts?.[mcqId];
+        if (!attempts || attempts.length === 0) return false;
+        return attempts[attempts.length - 1].isCorrect;
+      });
+    });
+  };
+
+  const getDiagnosticMcqs = (): MCQItem[] => {
+    if (!currentTopic?.pre_test_mcq_ids || currentTopic.pre_test_mcq_ids.length === 0) {
+      return [];
+    }
+    const result: MCQItem[] = [];
+    (currentTopic.mcqs || []).forEach(m => {
+      if (currentTopic.pre_test_mcq_ids?.includes(m.id)) {
+        result.push(m);
+      }
+    });
+    if (result.length < currentTopic.pre_test_mcq_ids.length) {
+      (chapter?.topics || []).forEach(t => {
+        (t.mcqs || []).forEach(m => {
+          if (currentTopic.pre_test_mcq_ids?.includes(m.id) && !result.some(r => r.id === m.id)) {
+            result.push(m);
+          }
+        });
+      });
+    }
+    if (result.length === 0) {
+      currentTopic.pre_test_mcq_ids.forEach((id, i) => {
+        result.push({
+          id,
+          question: `Diagnostic Assessment Question #${i + 1}: To satisfy UPSC core qualifications for "${currentTopic.title}", select the correct statutory or constitutional basis.`,
+          options: [
+            "It is a constitutional mandate governed by explicit primary provisions",
+            "It is an executive resolution enacted under delegated authority",
+            "It is a statutory codification derived from legislative acts",
+            "All of the above depending on judicial interpretation"
+          ],
+          answer: "A",
+          explanation: "This diagnostic validation ensures foundational knowledge is verified before starting intensive topic study.",
+          source: "import"
+        });
+      });
+    }
+    return result;
+  };
+
+  const handleDiagnosticAnswer = (mcqId: string, selection: string) => {
+    const diagnosticMcqs = getDiagnosticMcqs();
+    const mcq = diagnosticMcqs.find(m => m.id === mcqId);
+    if (!mcq) return;
+    const isCorrect = selection === mcq.answer;
+    
+    setDiagnosticAnswers(prev => ({ ...prev, [mcqId]: selection }));
+    
+    const currentProg: TopicProgress = savedProgress[currentTopic.id] || {
+      read: false, slides: false, concepts: false, flashcards: false, pyq: {}, notes: ""
+    };
+    const currentAttempts = currentProg.mcqAttempts?.[mcqId] || [];
+    const updatedAttempts = [
+      ...currentAttempts,
+      {
+        date: new Date().toISOString().split('T')[0],
+        isCorrect,
+        answer: selection
+      }
+    ];
+    
+    onSaveProgress(currentTopic.id, {
+      ...currentProg,
+      mcqAttempts: {
+        ...(currentProg.mcqAttempts || {}),
+        [mcqId]: updatedAttempts
+      }
+    });
+  };
 
   // Sync highlights on mount or topic change
   useEffect(() => {
@@ -106,6 +331,16 @@ export default function ChapterReaderTab({
     }
     setShowHighlightPopup(false);
   }, [chapter?.id, currentTopic?.id]);
+
+  // Clear paragraph flashing after 3.5 seconds
+  useEffect(() => {
+    if (targetFlashParagraph !== null) {
+      const timer = setTimeout(() => {
+        setTargetFlashParagraph(null);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [targetFlashParagraph]);
 
   // Load progress state for current topic
   const topicProgress: TopicProgress = (currentTopic && savedProgress && savedProgress[currentTopic.id]) || {
@@ -140,6 +375,7 @@ export default function ChapterReaderTab({
 
   // 3. Concepts: Expand key
   const [expandedConceptIdx, setExpandedConceptIdx] = useState<number | null>(null);
+  const [expandedCaseLawIdx, setExpandedCaseLawIdx] = useState<number | null>(null);
 
   // 4. Flashcards: tactile state
   const [flashcardIdx, setFlashcardIdx] = useState(0);
@@ -206,6 +442,19 @@ export default function ChapterReaderTab({
           setSelectionText(text);
         }
         setSelectedText(text);
+
+        // Find closest paragraph container to get paragraph index
+        const anchorParent = sel.anchorNode?.parentElement;
+        const pElement = anchorParent?.closest('p[data-paragraph-index]');
+        const pIdxAttr = pElement?.getAttribute('data-paragraph-index');
+
+        if (pIdxAttr !== null && pIdxAttr !== undefined) {
+          const pIdx = parseInt(pIdxAttr, 10);
+          const { start, end } = getSelectionCharacterOffsetWithin(pElement as HTMLElement);
+          setSelectionDetails({ pIdx, start, end });
+        } else {
+          setSelectionDetails(null);
+        }
         
         const range = sel.getRangeAt(0);
         const rect = range?.getBoundingClientRect();
@@ -214,6 +463,10 @@ export default function ChapterReaderTab({
             x: rect.left + rect.width / 2,
             y: rect.top - 10
           });
+          setPopupTab('highlight');
+          setAiPopupQuery('');
+          setAiPopupResult('');
+          setCustomNoteText('');
           setShowHighlightPopup(true);
         }
       } else {
@@ -229,7 +482,10 @@ export default function ChapterReaderTab({
 
     const newHighlight: SavedHighlight = {
       text: selectedText,
-      color
+      color,
+      pIdx: selectionDetails?.pIdx,
+      start: selectionDetails?.start,
+      end: selectionDetails?.end
     };
 
     const updated = [...highlights, newHighlight];
@@ -240,6 +496,31 @@ export default function ChapterReaderTab({
     window.getSelection()?.removeAllRanges();
     setShowHighlightPopup(false);
     setSelectedText('');
+    setSelectionDetails(null);
+  };
+
+  const handleSaveCustomNote = (noteText: string, color: 'yellow' | 'green' | 'pink') => {
+    if (!selectedText || !chapter?.id || !currentTopic?.id || !noteText.trim()) return;
+
+    const newHighlight: SavedHighlight = {
+      text: selectedText,
+      color,
+      pIdx: selectionDetails?.pIdx,
+      start: selectionDetails?.start,
+      end: selectionDetails?.end,
+      note: noteText.trim()
+    };
+
+    const updated = [...highlights, newHighlight];
+    setHighlights(updated);
+    localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+
+    // Clear selection & reset
+    window.getSelection()?.removeAllRanges();
+    setShowHighlightPopup(false);
+    setSelectedText('');
+    setSelectionDetails(null);
+    setCustomNoteText('');
   };
 
   const handleClearHighlights = () => {
@@ -262,7 +543,104 @@ export default function ChapterReaderTab({
     localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
   };
 
-  // Format paragraph text by wrapping any saved highlighted substrings in <mark>
+  const handleRemoveSpecificHighlightInstance = (highlightToRemove: SavedHighlight) => {
+    if (!chapter?.id || !currentTopic?.id) return;
+    const updated = highlights.filter(h => 
+      !(h.pIdx === highlightToRemove.pIdx && 
+        h.start === highlightToRemove.start && 
+        h.end === highlightToRemove.end && 
+        h.text === highlightToRemove.text)
+    );
+    setHighlights(updated);
+    localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+  };
+
+  // Format paragraph text by wrapping saved highlights by precise index offsets
+  const renderParagraphWithHighlights = (para: string, pIdx: number) => {
+    if (!showHighlights || !highlights || highlights.length === 0) {
+      return para;
+    }
+
+    // Filter highlights that belong to this paragraph specifically
+    const paraHighlights = highlights.filter(h => h.pIdx === pIdx && h.start !== undefined && h.end !== undefined);
+
+    if (paraHighlights.length === 0) {
+      // Fallback to old string matching if there are global / old highlights that don't have pIdx
+      const globalHighlights = highlights.filter(h => h.pIdx === undefined);
+      if (globalHighlights.length > 0) {
+        return renderHighlightedText(para);
+      }
+      return para;
+    }
+
+    // Sort highlights by start offset ascending
+    const sorted = [...paraHighlights].sort((a, b) => a.start! - b.start!);
+
+    // Build the rendered elements
+    const elements: React.ReactNode[] = [];
+    let lastIdx = 0;
+
+    sorted.forEach((h, idx) => {
+      const start = h.start!;
+      const end = h.end!;
+
+      // Guard against overlapping highlights or invalid offsets
+      if (start < lastIdx || end > para.length) return;
+
+      // Add normal text before the highlight
+      if (start > lastIdx) {
+        elements.push(para.substring(lastIdx, start));
+      }
+
+      // Add the highlight mark element
+      const colorClass = 
+        h.color === 'green' ? 'bg-emerald-300 text-black' :
+        h.color === 'pink' ? 'bg-pink-300 text-black' :
+        'bg-yellow-200 text-black';
+
+      const highlightedText = para.substring(start, end);
+      const hasNote = h.note && h.note.trim().length > 0;
+
+      elements.push(
+        <span key={`h-${pIdx}-${idx}`} className="relative inline">
+          <mark 
+            className={`${colorClass} px-0.5 rounded font-serif select-text cursor-pointer hover:opacity-90 transition-all duration-150 ${
+              hasNote ? 'border-b-2 border-dashed border-red-600 font-medium' : ''
+            }`}
+            title={hasNote ? "Click to view personal note" : "Click to remove highlight"}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasNote) {
+                setPopupPosition({ x: e.clientX, y: e.clientY + window.scrollY - 30 });
+                setActiveNoteHighlight(h);
+                setIsEditingNote(false);
+              } else {
+                handleRemoveSpecificHighlightInstance(h);
+              }
+            }}
+          >
+            {highlightedText}
+            {hasNote && (
+              <span className="inline-flex items-center justify-center ml-1 text-[10px] bg-red-600 text-white rounded-full w-4.5 h-4.5 shadow-sm align-middle font-sans font-bold select-none hover:scale-110 transition">
+                📝
+              </span>
+            )}
+          </mark>
+        </span>
+      );
+
+      lastIdx = end;
+    });
+
+    // Add remaining text of the paragraph
+    if (lastIdx < para.length) {
+      elements.push(para.substring(lastIdx));
+    }
+
+    return elements;
+  };
+
+  // Format paragraph text by wrapping any saved highlighted substrings in <mark> (Fallback)
   const renderHighlightedText = (text: string) => {
     if (!showHighlights || !highlights || highlights.length === 0) {
       return text;
@@ -322,12 +700,18 @@ export default function ChapterReaderTab({
     setMainsAttachment(null);
     setMainsAttachmentError('');
     setSelectionText('');
-    setGeneratedMCQs([]);
     setMcqAnswers({});
     
     // Load historical progress selections
     if (currentTopic) {
       setPyqAnswers(savedProgress[currentTopic.id]?.pyq || {});
+      if (currentTopic.mcqs && currentTopic.mcqs.length > 0) {
+        setGeneratedMCQs(currentTopic.mcqs);
+      } else {
+        setGeneratedMCQs([]);
+      }
+    } else {
+      setGeneratedMCQs([]);
     }
   }, [activeTopicIdx, currentTopic?.id]);
 
@@ -987,8 +1371,76 @@ An image or PDF containing the handwritten answer draft is attached to this requ
             lineHeight: lineSpacing 
           }}
         >
-          
-          {/* Tab Panel 1: Read */}
+          {!isPreTestPassed() ? (
+            <div className="max-w-2xl mx-auto space-y-6 text-left animate-fade-in py-4">
+              <div className="bg-amber-500/10 border border-amber-500/30 p-6 rounded-3xl space-y-3 border-l-4 border-l-amber-500">
+                <div className="flex items-center gap-3 text-amber-500">
+                  <BrainCircuit className="w-6 h-6 animate-pulse" />
+                  <h2 className="font-serif font-bold text-base sm:text-lg uppercase tracking-wide">Diagnostic Gating Active</h2>
+                </div>
+                <p className="text-xs text-[var(--t2)] leading-relaxed font-sans">
+                  The topic <strong>"{currentTopic?.title}"</strong> contains advanced materials. Satisfy the prerequisite competency diagnostic test by passing the <strong>{getDiagnosticMcqs().length}</strong> prerequisite assessment questions below correctly to unlock full access.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-sans font-bold text-xs uppercase tracking-wider text-[var(--t3)] border-b border-[var(--bd)] pb-1.5">Prerequisite MCQ Diagnostic Drill</h3>
+                {getDiagnosticMcqs().map((mcq, idx) => {
+                  const attempts = (savedProgress[currentTopic?.id]?.mcqAttempts?.[mcq.id]) || [];
+                  const lastAttempt = attempts[attempts.length - 1];
+                  const isSolved = lastAttempt?.isCorrect;
+                  const selected = diagnosticAnswers[mcq.id] || lastAttempt?.answer;
+
+                  return (
+                    <div key={mcq.id} className={`p-5 rounded-2xl border ${isSolved ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-[var(--bd)] bg-[var(--sur)]'} space-y-4 shadow-3xs transition`}>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--gd)] font-bold">Diagnostic Question #{idx + 1}</span>
+                        {isSolved && (
+                          <span className="text-[9px] font-mono font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">✓ Passed</span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm text-[var(--t1)] font-sans leading-relaxed">{mcq.question}</p>
+                      
+                      <div className="grid grid-cols-1 gap-2.5 pt-1">
+                        {mcq.options.map((option, optIdx) => {
+                          const letter = String.fromCharCode(65 + optIdx);
+                          const isSelectedOption = selected === letter;
+                          let btnStyle = 'border-[var(--bd)] hover:border-[var(--gd)] hover:bg-[var(--ra)]/30 text-[var(--t2)]';
+                          if (isSelectedOption) {
+                            btnStyle = isSolved || mcq.answer === letter
+                              ? 'border-emerald-500 bg-emerald-500/10 text-emerald-500 font-bold'
+                              : 'border-red-500 bg-red-500/10 text-red-500 font-bold';
+                          } else if (isSolved && mcq.answer === letter) {
+                            btnStyle = 'border-emerald-500 bg-emerald-500/10 text-emerald-500 font-bold';
+                          }
+
+                          return (
+                            <button
+                              key={optIdx}
+                              disabled={isSolved}
+                              onClick={() => handleDiagnosticAnswer(mcq.id, letter)}
+                              className={`w-full text-left p-3 rounded-xl border text-xs font-sans transition flex items-center gap-2.5 cursor-pointer ${btnStyle}`}
+                            >
+                              <span className="font-mono font-bold shrink-0">{letter}.</span>
+                              <span className="flex-1">{option}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {isSolved && mcq.explanation && (
+                        <p className="text-[11px] text-[var(--t2)] font-serif italic bg-[var(--ra)]/40 p-3 rounded-xl border border-[var(--bd)]/40 mt-3">
+                          <strong>Diagnostic Rationale:</strong> {mcq.explanation}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Tab Panel 1: Read */}
           {activeTab === 'read' && (
             <div className="max-w-3xl mx-auto space-y-6 text-left">
               {/* Controls & highlight notification */}
@@ -1071,18 +1523,201 @@ An image or PDF containing the handwritten answer draft is attached to this requ
 
                 {/* Main section body */}
                 {currentTopic.full_text ? (
-                  currentTopic.full_text.split('\n\n').map((para, pIdx) => (
-                    <p key={pIdx} className="mb-4 text-justify leading-relaxed text-[var(--t1)]" style={{ fontSize: `${fontSize}px` }}>
-                      {renderHighlightedText(para)}
-                    </p>
-                  ))
+                  currentTopic.full_text.split('\n\n').map((para, pIdx) => {
+                    // Check if it is a markdown table
+                    const lines = para.trim().split('\n');
+                    const hasSeparator = lines.some(line => {
+                      const trimmed = line.trim();
+                      return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.includes('-') && !/[a-zA-Z0-9]/.test(trimmed);
+                    });
+
+                    if (hasSeparator && lines.length >= 2) {
+                      // It is a table block! Render it with the table parser
+                      const parsedRows = lines.map(line => {
+                        const cells = line.split('|').map(cell => cell.trim());
+                        if (line.trim().startsWith('|')) cells.shift();
+                        if (line.trim().endsWith('|')) cells.pop();
+                        return cells;
+                      });
+
+                      const separatorIdx = parsedRows.findIndex(row => 
+                        row.every(cell => cell === '' || cell.startsWith('-') || cell.split('').every(char => char === '-' || char === ':' || char === ' '))
+                      );
+
+                      let headerRow: string[] = [];
+                      let bodyRows: string[][] = [];
+
+                      if (separatorIdx !== -1) {
+                        if (separatorIdx > 0) {
+                          headerRow = parsedRows[separatorIdx - 1];
+                        }
+                        bodyRows = parsedRows.slice(separatorIdx + 1);
+                      } else {
+                        headerRow = parsedRows[0];
+                        bodyRows = parsedRows.slice(1);
+                      }
+
+                      return (
+                        <div key={pIdx} className="overflow-x-auto my-6 border border-[var(--bd)] rounded-2xl shadow-sm bg-[var(--sur)]">
+                          <table className="w-full border-collapse text-left text-xs md:text-sm">
+                            {headerRow.length > 0 && (
+                              <thead className="bg-[var(--ra)] border-b border-[var(--bd)]">
+                                <tr>
+                                  {headerRow.map((cell, cIdx) => (
+                                    <th 
+                                      key={cIdx} 
+                                      className="px-4 py-3 font-sans font-bold text-[var(--gd)] uppercase tracking-wider border-r border-[var(--bd)]/30 last:border-0"
+                                    >
+                                      {renderParagraphWithHighlights(cell, pIdx * 1000 + cIdx)}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                            )}
+                            <tbody className="divide-y divide-[var(--bd)]/30">
+                              {bodyRows.map((row, rIdx) => (
+                                <tr 
+                                  key={rIdx} 
+                                  className="hover:bg-[var(--ra)]/30 transition even:bg-[var(--ra)]/10"
+                                >
+                                  {row.map((cell, cIdx) => (
+                                    <td 
+                                      key={cIdx} 
+                                      className="px-4 py-3 font-serif text-[var(--t2)] border-r border-[var(--bd)]/30 last:border-0 align-top"
+                                    >
+                                      {renderParagraphWithHighlights(cell, pIdx * 1000 + 100 + rIdx * 10 + cIdx)}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    }
+
+                    // Otherwise, render as a standard paragraph
+                    const isFlashed = targetFlashParagraph === pIdx;
+                    return (
+                      <p 
+                        key={pIdx} 
+                        id={`p-idx-${pIdx}`}
+                        data-paragraph-index={pIdx}
+                        className={`mb-4 text-justify leading-relaxed text-[var(--t1)] transition-all duration-500 ${
+                          isFlashed 
+                            ? 'ring-2 ring-[var(--gd)] ring-offset-4 ring-offset-[var(--bg)] bg-[var(--ra)] p-3.5 rounded-2xl animate-pulse shadow-lg scale-[1.01]' 
+                            : ''
+                        }`} 
+                        style={{ fontSize: `${fontSize}px` }}
+                      >
+                        {renderParagraphWithHighlights(para, pIdx)}
+                      </p>
+                    );
+                  })
                 ) : (
                   <p className="italic text-[var(--t3)]" style={{ fontSize: `${fontSize}px` }}>No text available for this topic.</p>
                 )}
               </div>
 
+              {/* Comparisons Matrix */}
+              {currentTopic.comparisons && currentTopic.comparisons.length > 0 && (
+                <div className="space-y-6 mt-8 pt-6 border-t border-[var(--bd)]/40 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block">Syllabus Comparison Matrix</span>
+                  {currentTopic.comparisons.map((table, idx) => (
+                    <div key={idx} className="space-y-2">
+                      <h4 className="font-sans font-bold text-xs text-[var(--gd)] uppercase tracking-wide">{table.title}</h4>
+                      <div className="overflow-x-auto border border-[var(--bd)] rounded-2xl shadow-sm bg-[var(--sur)]">
+                        <table className="w-full border-collapse text-left text-xs">
+                          <thead className="bg-[var(--ra)] border-b border-[var(--bd)]">
+                            <tr>
+                              <th className="px-4 py-3 font-sans font-bold text-[var(--t1)] uppercase tracking-wider border-r border-[var(--bd)]/30">
+                                Attribute
+                              </th>
+                              <th className="px-4 py-3 font-sans font-bold text-[var(--t1)] uppercase tracking-wider border-r border-[var(--bd)]/30">
+                                {table.left_label}
+                              </th>
+                              <th className="px-4 py-3 font-sans font-bold text-[var(--t1)] uppercase tracking-wider border-r border-[var(--bd)]/30 last:border-0">
+                                {table.right_label}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--bd)]/30">
+                            {table.rows.map((row, rIdx) => (
+                              <tr key={rIdx} className="hover:bg-[var(--ra)]/30 transition even:bg-[var(--ra)]/10">
+                                <td className="px-4 py-3 font-sans font-bold text-[var(--t1)] border-r border-[var(--bd)]/30 last:border-0 bg-[var(--ra)]/10">
+                                  {row.attribute}
+                                </td>
+                                <td className="px-4 py-3 font-serif text-[var(--t2)] border-r border-[var(--bd)]/30 last:border-0">
+                                  {row.left}
+                                </td>
+                                <td className="px-4 py-3 font-serif text-[var(--t2)] border-r border-[var(--bd)]/30 last:border-0">
+                                  {row.right}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Timeline Section */}
+              {currentTopic.timeline && currentTopic.timeline.length > 0 && (
+                <div className="space-y-5 mt-8 pt-6 border-t border-[var(--bd)]/40 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block">Chronological Timeline</span>
+                  <div className="relative pl-6 border-l border-[var(--bd)] ml-2.5 space-y-5 py-1">
+                    {currentTopic.timeline.map((event, idx) => (
+                      <div key={idx} className="relative">
+                        {/* Bullet dot */}
+                        <div className="absolute -left-[31px] top-1.5 w-2.5 h-2.5 rounded-full bg-[var(--gd)] border-2 border-[var(--bg)] shadow-xs" />
+                        
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-mono font-bold text-[var(--gd)] tracking-wider uppercase block">{event.year}</span>
+                          <h4 className="font-sans font-bold text-xs text-[var(--t1)]">{event.event}</h4>
+                          {event.significance && (
+                            <p className="text-[11px] text-[var(--t2)] font-serif leading-relaxed">{event.significance}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* See Also Cross-References */}
+              {currentTopic.see_also && currentTopic.see_also.length > 0 && (
+                <div className="space-y-3 mt-8 pt-6 border-t border-[var(--bd)]/40 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block">See Also (Syllabus Cross-References)</span>
+                  <div className="flex flex-wrap gap-2">
+                    {currentTopic.see_also.map((ref, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          const sameCh = ref.chapter_number === chapter.metadata.chapter_number;
+                          if (sameCh) {
+                            const topicIdx = chapter.topics.findIndex(t => t.id === ref.topic_id);
+                            if (topicIdx !== -1) {
+                              setActiveTopicIdx(topicIdx);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }
+                          } else if (onNavigateToTopic) {
+                            onNavigateToTopic(ref.chapter_number, ref.topic_id, 'read');
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-[var(--ra)] border border-[var(--bd)] hover:border-[var(--gd)] hover:text-[var(--gd)] text-[11px] font-sans font-medium rounded-full transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                      >
+                        <span className="text-[var(--gd)]">☞</span>
+                        <span>{ref.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Bottom Complete Checker */}
-              <div className="pt-8 border-t border-[var(--bd)] text-center font-sans">
+              <div className="pt-8 border-t border-[var(--bd)] flex flex-col items-center gap-4 font-sans">
                 <button
                   onClick={() => updateProgress({ read: !topicProgress.read })}
                   className={`px-6 py-2.5 rounded-full font-bold uppercase text-xs tracking-wider transition ${
@@ -1093,6 +1728,34 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                 >
                   {topicProgress.read ? '✓ Completed Reading' : 'Mark Topic as Read'}
                 </button>
+
+                {/* Chapter Complete Tick Option (At the end of last topic in read section) */}
+                {activeTopicIdx === chapter.topics.length - 1 && onToggleChapterComplete && (
+                  <div className="mt-4 p-5 bg-[var(--ra)] border border-[var(--bd)] rounded-2xl max-w-md w-full flex flex-col items-center gap-3 animate-fade-in shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Award className="w-5 h-5 text-[var(--gd)]" />
+                      <h4 className="font-bold text-sm text-[var(--t1)]">Chapter Completion</h4>
+                    </div>
+                    <p className="text-[10px] text-[var(--t3)] text-center leading-relaxed max-w-xs">
+                      Marking this chapter as complete will schedule its Spaced-Repetition cards for due revision on Day + 2 (D+2) in your Leitner section.
+                    </p>
+                    <button
+                      onClick={() => onToggleChapterComplete(!isChapterCompleted)}
+                      className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition border ${
+                        isChapterCompleted
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500'
+                          : 'bg-[var(--sur)] border-[var(--bd)] text-[var(--t2)] hover:border-[var(--gd)] hover:text-[var(--gd)]'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded flex items-center justify-center border ${
+                        isChapterCompleted ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-[var(--bd)]'
+                      }`}>
+                        {isChapterCompleted && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                      {isChapterCompleted ? '✓ Chapter Completed' : 'Mark Chapter Complete (D+2 Revision)'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1112,12 +1775,12 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                       <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono tracking-widest block">
                         Module: {currentTopic.lesson_slides[activeSlideIdx].type}
                       </span>
-                      <h2 className="text-xl font-bold text-[var(--t1)] font-serif" style={{ fontSize: `${getTabFontSize('lesson', fontSize) * 1.2}px` }}>
+                      <h2 className="text-xl font-bold text-[var(--t1)] font-serif" style={{ fontSize: `${Math.round(getTabFontSize('lesson', fontSize) * 1.2)}px` }}>
                         {currentTopic.lesson_slides[activeSlideIdx].title}
                       </h2>
-                      <p className="text-sm text-[var(--t2)] whitespace-pre-line leading-relaxed font-serif pt-2 border-t border-[var(--bd)]/10" style={{ fontSize: `${getTabFontSize('lesson', fontSize)}px` }}>
-                        {currentTopic.lesson_slides[activeSlideIdx].content}
-                      </p>
+                      <div className="pt-2 border-t border-[var(--bd)]/10">
+                        {renderSlideContent(currentTopic.lesson_slides[activeSlideIdx].content, getTabFontSize('lesson', fontSize))}
+                      </div>
                     </div>
 
                     <div className="flex justify-between items-center pt-6 border-t border-[var(--bd)]/10 mt-6 shrink-0">
@@ -1228,12 +1891,47 @@ An image or PDF containing the handwritten answer draft is attached to this requ
           )}
 
           {/* Tab Panel 3: Concepts */}
-          {activeTab === 'concepts' && (
+          {activeTab === 'concepts' && currentTopic && (
             <div className="max-w-2xl mx-auto space-y-6 text-left">
-              <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block mb-2">Key Core Concepts</span>
-              
-              {currentTopic.key_concepts && currentTopic.key_concepts.length > 0 ? (
-                <div className="space-y-3">
+              {/* Formula Box Section */}
+              {currentTopic.formula_box && currentTopic.formula_box.length > 0 && (
+                <div className="space-y-3.5 mb-6 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block border-b border-[var(--bd)] pb-1">Quantitative Formula Box</span>
+                  <div className="grid grid-cols-1 gap-4">
+                    {currentTopic.formula_box.map((f, idx) => (
+                      <div key={idx} className="p-4 bg-[var(--ra)] border border-[var(--bd)] rounded-2xl space-y-3 shadow-xs">
+                        <h4 className="font-sans font-bold text-xs text-[var(--gd)] uppercase tracking-wide">{f.name}</h4>
+                        <div className="py-3 px-4 bg-[var(--sur)] rounded-xl border border-[var(--bd)] text-center font-mono font-bold text-sm text-[var(--t1)]">
+                          {f.formula}
+                        </div>
+                        {f.variables && Object.keys(f.variables).length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[9px] uppercase tracking-wider text-[var(--t3)] font-mono font-bold">Variables:</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                              {Object.entries(f.variables).map(([key, val]) => (
+                                <div key={key} className="flex gap-1.5 font-sans">
+                                  <span className="font-mono font-bold text-[var(--gd)] shrink-0">{key}:</span>
+                                  <span className="text-[var(--t2)]">{val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {f.example && (
+                          <p className="text-[11px] text-[var(--t2)] font-serif italic mt-1.5 border-t border-[var(--bd)]/40 pt-1.5">
+                            <strong>Example:</strong> {f.example}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Key Concepts List */}
+              {currentTopic.key_concepts && currentTopic.key_concepts.length > 0 && (
+                <div className="space-y-3 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block border-b border-[var(--bd)] pb-1">Key Core Concepts</span>
                   {currentTopic.key_concepts.map((concept, idx) => {
                     const isOpen = expandedConceptIdx === idx;
                     return (
@@ -1248,8 +1946,8 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                               <span className="text-[10px] font-mono text-[var(--gd)] mt-0.5 block">Article {concept.article}</span>
                             )}
                           </div>
-                          <span className="text-[var(--gd)] font-mono text-xs font-bold shrink-0">
-                            {isOpen ? 'Collapse [-]' : 'Expand [+]'}
+                          <span className="text-[var(--gd)] shrink-0">
+                            {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </span>
                         </button>
 
@@ -1268,20 +1966,88 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                       </div>
                     );
                   })}
-                  
-                  {/* Mark as read button */}
-                  <div className="pt-6 text-center font-sans">
-                    <button
-                      onClick={() => updateProgress({ concepts: true })}
-                      className="bg-[var(--gd)] text-[var(--bg)] px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:opacity-95"
-                    >
-                      ✓ Mastery Verified
-                    </button>
-                  </div>
                 </div>
-              ) : (
-                <div className="text-center py-12 text-[var(--t3)]">No core concepts catalogued yet.</div>
               )}
+
+              {/* Case Law Section */}
+              {currentTopic.case_law && currentTopic.case_law.length > 0 && (
+                <div className="space-y-3 mt-6 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block border-b border-[var(--bd)] pb-1">Constitutional Case Law Panel</span>
+                  {currentTopic.case_law.map((c, idx) => {
+                    const isCaseOpen = expandedCaseLawIdx === idx;
+                    return (
+                      <div key={idx} className="border border-[var(--bd)] rounded-2xl overflow-hidden bg-[var(--sur)] transition duration-200">
+                        <button
+                          onClick={() => setExpandedCaseLawIdx(isCaseOpen ? null : idx)}
+                          className="w-full text-left p-4 flex justify-between items-center hover:bg-[var(--ra)] transition"
+                        >
+                          <div className="min-w-0 pr-4">
+                            <h4 className="font-bold font-serif text-[var(--t1)] text-xs sm:text-sm">{c.case_name}</h4>
+                            <span className="text-[9px] font-mono text-[var(--gd)] mt-0.5 block">{c.court || 'Supreme Court of India'} • {c.year}</span>
+                          </div>
+                          <span className="text-[var(--gd)] shrink-0">
+                            {isCaseOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                        </button>
+
+                        {isCaseOpen && (
+                          <div className="p-4 bg-[var(--ra)] border-t border-[var(--bd)] space-y-3 animate-fade-in font-sans text-[11px]">
+                            <div>
+                              <span className="font-mono text-[9px] font-bold text-[var(--t3)] uppercase block tracking-wider">Judicial Holding</span>
+                              <p className="text-[var(--t1)] leading-relaxed font-serif text-xs">{c.holding}</p>
+                            </div>
+                            {c.upsc_relevance && (
+                              <div className="bg-amber-500/5 border border-amber-500/20 p-3 rounded-xl border-l-4 border-l-amber-500 space-y-1">
+                                <span className="font-mono text-[9px] font-bold text-amber-500 uppercase block tracking-wider">UPSC Exam Relevance</span>
+                                <p className="text-[var(--t1)] italic leading-relaxed font-serif text-xs">{c.upsc_relevance}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Mnemonics Section */}
+              {currentTopic.mnemonics && currentTopic.mnemonics.length > 0 && (
+                <div className="space-y-3 mt-6 animate-fade-in">
+                  <span className="text-[10px] uppercase font-bold text-[var(--t3)] font-mono block border-b border-[var(--bd)] pb-1">Cognitive Memory Mnemonics</span>
+                  {currentTopic.mnemonics.map((m, idx) => (
+                    <div key={idx} className="p-4 bg-[var(--ra)] border border-[var(--bd)] rounded-2xl space-y-2.5 relative overflow-hidden shadow-xs">
+                      <div className="absolute top-0 right-0 p-1.5 text-[9px] font-mono font-bold uppercase tracking-wider text-[var(--bg)] bg-[var(--gd)] rounded-bl-xl">
+                        {m.type}
+                      </div>
+                      <h4 className="font-sans font-bold text-xs text-[var(--t1)] tracking-wide pr-14">{m.title}</h4>
+                      <div className="py-2.5 px-4 bg-[var(--sur)] rounded-xl border border-[var(--bd)] text-center font-mono font-bold text-base text-[var(--gd)] tracking-widest uppercase">
+                        {m.content}
+                      </div>
+                      <p className="text-[11px] text-[var(--t2)] font-serif leading-relaxed pt-1.5 border-t border-[var(--bd)]/40">
+                        <strong>Covers:</strong> {m.covers}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* General Empty State Warning */}
+              {(!currentTopic.key_concepts || currentTopic.key_concepts.length === 0) &&
+               (!currentTopic.formula_box || currentTopic.formula_box.length === 0) &&
+               (!currentTopic.case_law || currentTopic.case_law.length === 0) &&
+               (!currentTopic.mnemonics || currentTopic.mnemonics.length === 0) && (
+                <div className="text-center py-12 text-[var(--t3)]">No concepts, formula boxes, case law, or mnemonics catalogued for this topic yet.</div>
+              )}
+
+              {/* Mark as read button */}
+              <div className="pt-6 text-center font-sans">
+                <button
+                  onClick={() => updateProgress({ concepts: true })}
+                  className="bg-[var(--gd)] text-[var(--bg)] px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:opacity-95 cursor-pointer"
+                >
+                  ✓ Mastery Verified
+                </button>
+              </div>
             </div>
           )}
 
@@ -1379,7 +2145,73 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                 </span>
               </div>
 
-              {currentTopic.pyq_ids && currentTopic.pyq_ids.length > 0 ? (
+              {currentTopic.pyqs && currentTopic.pyqs.length > 0 ? (
+                <div className="space-y-6">
+                  {currentTopic.pyqs.map((q, pIdx) => {
+                    const selected = pyqAnswers[q.id];
+
+                    return (
+                      <div key={q.id} className="bg-[var(--sur)] border border-[var(--bd)] rounded-2xl p-5 space-y-4">
+                        <div className="flex justify-between items-center text-[10px] font-mono text-[var(--t3)] border-b border-[var(--bd)]/10 pb-1.5">
+                          <span>QUESTION #{pIdx + 1} {q.year ? `(${q.year})` : ''}</span>
+                          <span className="text-[var(--gd)] font-bold">UPSC PRELIMS</span>
+                        </div>
+                        
+                        <p className="font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>
+                          {q.question}
+                        </p>
+
+                        {/* Options */}
+                        <div className="space-y-2 font-sans">
+                          {q.options.map((opt, oIdx) => {
+                            const optionChar = String.fromCharCode(65 + oIdx);
+                            const isSelected = selected === optionChar;
+                            const isCorrect = optionChar === q.answer;
+                            
+                            let borderClass = "border-[var(--bd)] hover:bg-[var(--ra)]";
+                            let icon = null;
+                            if (selected) {
+                              if (isCorrect) {
+                                borderClass = "border-[var(--ok)] bg-emerald-500/10 text-[var(--ok)]";
+                                icon = "✓";
+                              } else if (isSelected) {
+                                borderClass = "border-[var(--er)] bg-red-500/10 text-[var(--er)]";
+                                icon = "✗";
+                              }
+                            }
+
+                            return (
+                              <button
+                                key={oIdx}
+                                disabled={!!selected}
+                                onClick={() => {
+                                  const updated = { ...pyqAnswers, [q.id]: optionChar };
+                                  setPyqAnswers(updated);
+                                  updateProgress({ pyq: updated });
+                                }}
+                                className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition ${borderClass}`}
+                              >
+                                <span className="flex-1 pr-3" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>
+                                  <strong className="mr-1.5 font-mono">{optionChar}.</strong> {opt}
+                                </span>
+                                {icon && <span className="font-mono font-bold text-sm shrink-0">{icon}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Explanation */}
+                        {selected && (
+                          <div className="p-4 bg-[var(--ra)] rounded-xl text-xs space-y-1.5 animate-fade-in border-l-2 border-l-[var(--gd)]">
+                            <span className="font-mono font-bold text-[var(--gd)] text-[10px] uppercase block tracking-wider">Answer Key & Explanation:</span>
+                            <p className="text-[var(--t1)] font-serif leading-relaxed" style={{ fontSize: `${getTabFontSize('pyq', fontSize)}px` }}>{(q as any).answer_explanation || (q as any).explanation || 'No explanation provided.'}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : currentTopic.pyq_ids && currentTopic.pyq_ids.length > 0 ? (
                 <div className="space-y-6">
                   {currentTopic.pyq_ids.map((qid, pIdx) => {
                     const q = DEFAULT_OFFLINE_MCQS['t01'][pIdx]; // grab matching or mock pyq
@@ -1398,7 +2230,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                         </p>
 
                         {/* Options */}
-                        <div className="space-y-2 font-sans text-xs">
+                        <div className="space-y-2 font-sans">
                           {q.options.map((opt, oIdx) => {
                             const optionChar = String.fromCharCode(65 + oIdx);
                             const isSelected = selected === optionChar;
@@ -1490,7 +2322,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                         <span className="text-[10px] font-mono text-[var(--t3)] block">QUESTION {idx + 1} of {generatedMCQs.length}</span>
                         <p className="font-serif leading-relaxed text-[var(--t1)] whitespace-pre-line" style={{ fontSize: `${getTabFontSize('mcq', fontSize)}px` }}>{q.question}</p>
 
-                        <div className="space-y-2 text-xs">
+                        <div className="space-y-2">
                           {q.options.map((opt, oIdx) => {
                             const optChar = String.fromCharCode(65 + oIdx);
                             const isSelected = selected === optChar;
@@ -2030,9 +2862,82 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                   updateProgress({ notes: e.target.value });
                 }}
               />
+
+              {/* Linked Margin Notes & Annotations list */}
+              <div className="pt-4 border-t border-[var(--bd)] mt-6 space-y-4">
+                <div>
+                  <span className="text-[10px] font-mono text-[var(--t3)] uppercase tracking-wider block">Contextual Annotations</span>
+                  <h4 className="font-bold text-xs text-[var(--t1)]">Interactive Margin Notes ({highlights.filter(h => h.note && h.note.trim().length > 0).length})</h4>
+                  <p className="text-[10px] text-[var(--t3)] leading-relaxed mt-0.5">These notes are anchored to specific sentences in your readings. Click any reference quote to view it directly in the text body.</p>
+                </div>
+
+                {highlights.filter(h => h.note && h.note.trim().length > 0).length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-[var(--ra)]/30 border border-dashed border-[var(--bd)] text-center text-xs text-[var(--t3)] italic">
+                    No contextual margin notes added yet. Select any text in the "Read" section and click "Add Note" to populate these records.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {highlights.filter(h => h.note && h.note.trim().length > 0).map((h, idx) => {
+                      const colorClass = 
+                        h.color === 'green' ? 'border-l-4 border-l-emerald-400 bg-emerald-500/5' :
+                        h.color === 'pink' ? 'border-l-4 border-l-pink-400 bg-pink-500/5' :
+                        'border-l-4 border-l-yellow-400 bg-yellow-500/5';
+
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`p-4 rounded-2xl border border-[var(--bd)] flex flex-col justify-between gap-3 shadow-md transition-all hover:scale-[1.01] ${colorClass}`}
+                        >
+                          <div className="space-y-2">
+                            <p className="text-xs text-[var(--t1)] leading-relaxed font-serif bg-[var(--bg)]/40 p-2.5 rounded-xl border border-[var(--bd)]/30 italic">
+                              "{h.text}"
+                            </p>
+                            <p className="text-xs text-[var(--t2)] font-sans leading-relaxed bg-[var(--ra)]/40 p-2.5 rounded-xl border border-[var(--bd)]/20 font-medium whitespace-pre-line">
+                              {h.note}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center justify-between border-t border-[var(--bd)]/30 pt-2 text-[10px]">
+                            <button
+                              onClick={() => {
+                                handleRemoveSpecificHighlightInstance(h);
+                              }}
+                              className="text-red-500 hover:text-red-600 font-bold transition flex items-center gap-1 cursor-pointer"
+                              title="Delete Note"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setActiveTab('read');
+                                if (h.pIdx !== undefined) {
+                                  setTargetFlashParagraph(h.pIdx);
+                                  setTimeout(() => {
+                                    const el = document.getElementById(`p-idx-${h.pIdx}`);
+                                    if (el) {
+                                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }
+                                  }, 200);
+                                }
+                              }}
+                              className="text-[var(--gd)] hover:text-white font-bold transition flex items-center gap-1 cursor-pointer bg-[var(--ra)] px-2.5 py-1 rounded-lg border border-[var(--bd)]"
+                            >
+                              <BookOpen className="w-3 h-3" />
+                              Go to Context →
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
-
+          </>
+          )}
         </div>
 
         {/* 4. Navigator bar */}
@@ -2068,42 +2973,295 @@ An image or PDF containing the handwritten answer draft is attached to this requ
           </button>
         </div>
 
-        {/* Floating Highlight Color Picker Popup */}
+        {/* Floating Highlight & Interactive Annotation Menu */}
         {showHighlightPopup && (
           <div 
-            className="fixed z-50 bg-[var(--sur)] border border-[var(--bd)] p-1.5 rounded-xl shadow-xl flex items-center gap-1.5 animate-fade-in"
+            className="fixed z-50 bg-[var(--sur)] border border-[var(--gd)] p-3 rounded-2xl shadow-2xl flex flex-col gap-3 animate-fade-in w-80 text-left font-sans text-xs"
             style={{ 
-              top: `${popupPosition.y - 45}px`, 
+              top: `${popupPosition.y - 145}px`, 
               left: `${popupPosition.x}px`,
               transform: 'translateX(-50%)'
             }}
           >
-            <span className="text-[10px] text-[var(--t3)] font-sans px-1 font-bold">Highlight:</span>
-            <button
-              onClick={() => handleSaveHighlight('yellow')}
-              className="w-5 h-5 rounded-full bg-yellow-200 border border-yellow-300 hover:scale-110 transition cursor-pointer"
-              title="Yellow Highlight"
-            />
-            <button
-              onClick={() => handleSaveHighlight('green')}
-              className="w-5 h-5 rounded-full bg-emerald-300 border border-emerald-400 hover:scale-110 transition cursor-pointer"
-              title="Green Highlight"
-            />
-            <button
-              onClick={() => handleSaveHighlight('pink')}
-              className="w-5 h-5 rounded-full bg-pink-300 border border-pink-400 hover:scale-110 transition cursor-pointer"
-              title="Pink Highlight"
-            />
-            <div className="w-[1px] h-4 bg-[var(--bd)] mx-0.5" />
-            <button
-              onClick={() => {
-                setShowHighlightPopup(false);
-                window.getSelection()?.removeAllRanges();
-              }}
-              className="text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--ra)] text-[var(--t2)] hover:text-[var(--t1)] font-sans font-bold cursor-pointer"
-            >
-              Cancel
-            </button>
+            {/* Header / Tabs */}
+            <div className="flex border-b border-[var(--bd)] pb-1.5 gap-1">
+              <button
+                onClick={() => setPopupTab('highlight')}
+                className={`flex-1 py-1 rounded text-[10px] font-bold transition uppercase tracking-wider ${
+                  popupTab === 'highlight' ? 'bg-[var(--gd)] text-[var(--bg)]' : 'bg-transparent text-[var(--t2)] hover:bg-[var(--ra)]'
+                }`}
+              >
+                🖌️ Highlight
+              </button>
+              <button
+                onClick={() => setPopupTab('ai')}
+                className={`flex-1 py-1 rounded text-[10px] font-bold transition uppercase tracking-wider ${
+                  popupTab === 'ai' ? 'bg-[var(--gd)] text-[var(--bg)]' : 'bg-transparent text-[var(--t2)] hover:bg-[var(--ra)]'
+                }`}
+              >
+                ✨ Ask AI
+              </button>
+              <button
+                onClick={() => setPopupTab('note')}
+                className={`flex-1 py-1 rounded text-[10px] font-bold transition uppercase tracking-wider ${
+                  popupTab === 'note' ? 'bg-[var(--gd)] text-[var(--bg)]' : 'bg-transparent text-[var(--t2)] hover:bg-[var(--ra)]'
+                }`}
+              >
+                ✍️ Add Note
+              </button>
+            </div>
+
+            {/* Tab Body */}
+            <div className="flex-1 py-0.5">
+              {popupTab === 'highlight' && (
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-[10px] text-[var(--t2)] font-mono font-bold">SELECT COLOR FACTOR:</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSaveHighlight('yellow')}
+                      className="w-6 h-6 rounded-full bg-yellow-200 border border-yellow-300 hover:scale-115 transition cursor-pointer"
+                      title="Yellow Highlight"
+                    />
+                    <button
+                      onClick={() => handleSaveHighlight('green')}
+                      className="w-6 h-6 rounded-full bg-emerald-300 border border-emerald-400 hover:scale-115 transition cursor-pointer"
+                      title="Green Highlight"
+                    />
+                    <button
+                      onClick={() => handleSaveHighlight('pink')}
+                      className="w-6 h-6 rounded-full bg-pink-300 border border-pink-400 hover:scale-115 transition cursor-pointer"
+                      title="Pink Highlight"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {popupTab === 'ai' && (
+                <div className="space-y-2.5">
+                  <div className="text-[10px] text-[var(--t3)] truncate font-serif italic border-l-2 border-[var(--gd)] pl-1.5 py-0.5">
+                    "{selectedText}"
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <button
+                      onClick={async () => {
+                        setAiPopupLoading(true);
+                        setAiPopupResult('');
+                        const prompt = `Deconstruct and simplify this constitutional text in simple, highly intuitive terms with a concrete, memorable analogy for a UPSC aspirant: "${selectedText}"`;
+                        const res = await callGemini(prompt);
+                        setAiPopupResult(res);
+                        setAiPopupLoading(false);
+                      }}
+                      className="bg-[var(--ra)] hover:bg-[var(--bd)] text-[10px] px-2 py-1 rounded-lg font-bold cursor-pointer transition border border-[var(--bd)]"
+                    >
+                      💡 Simplify Text
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setAiPopupLoading(true);
+                        setAiPopupResult('');
+                        const prompt = `What are the core high-yield exam takeaways, key analysis points, or syllabus relevance for a UPSC CSE student regarding this text: "${selectedText}"`;
+                        const res = await callGemini(prompt);
+                        setAiPopupResult(res);
+                        setAiPopupLoading(false);
+                      }}
+                      className="bg-[var(--ra)] hover:bg-[var(--bd)] text-[10px] px-2 py-1 rounded-lg font-bold cursor-pointer transition border border-[var(--bd)]"
+                    >
+                      📝 UPSC Takeaways
+                    </button>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Ask Gemini about this context..."
+                      value={aiPopupQuery}
+                      onChange={(e) => setAiPopupQuery(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' && aiPopupQuery.trim() && !aiPopupLoading) {
+                          setAiPopupLoading(true);
+                          setAiPopupResult('');
+                          const prompt = `You are a helpful UPSC Polity expert. Answer the student's question regarding this context:\n"${selectedText}"\n\nQuestion: ${aiPopupQuery}`;
+                          const res = await callGemini(prompt);
+                          setAiPopupResult(res);
+                          setAiPopupLoading(false);
+                        }
+                      }}
+                      className="flex-1 bg-[var(--ra)] text-[11px] px-2.5 py-1.5 rounded-lg border border-[var(--bd)] text-[var(--t1)] focus:outline-none focus:ring-1 focus:ring-[var(--gd)] font-sans"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!aiPopupQuery.trim() || aiPopupLoading) return;
+                        setAiPopupLoading(true);
+                        setAiPopupResult('');
+                        const prompt = `You are a helpful UPSC Polity expert. Answer the student's question regarding this context:\n"${selectedText}"\n\nQuestion: ${aiPopupQuery}`;
+                        const res = await callGemini(prompt);
+                        setAiPopupResult(res);
+                        setAiPopupLoading(false);
+                      }}
+                      className="bg-[var(--gd)] text-[var(--bg)] px-2.5 py-1.5 rounded-lg font-bold hover:opacity-90 cursor-pointer text-[10px]"
+                    >
+                      Ask
+                    </button>
+                  </div>
+                  {aiPopupLoading && (
+                    <div className="flex items-center gap-1.5 py-1 text-[var(--t3)] font-mono text-[10px]">
+                      <RefreshCw className="w-3 h-3 animate-spin text-[var(--gd)]" />
+                      <span>Consulting Gemini AI Scholar...</span>
+                    </div>
+                  )}
+                  {aiPopupResult && (
+                    <div className="bg-[var(--ra)] p-2.5 rounded-xl border border-[var(--bd)]/40 text-[11px] text-[var(--t1)] max-h-32 overflow-y-auto leading-relaxed whitespace-pre-line font-sans select-text shadow-inner">
+                      {aiPopupResult}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {popupTab === 'note' && (
+                <div className="space-y-2">
+                  <textarea
+                    rows={3}
+                    value={customNoteText}
+                    onChange={(e) => setCustomNoteText(e.target.value)}
+                    placeholder="Annotate this text. Your notes are stored with a direct reference link back here..."
+                    className="w-full bg-[var(--ra)] text-[11px] p-2.5 rounded-xl border border-[var(--bd)] focus:outline-none focus:ring-1 focus:ring-[var(--gd)] text-[var(--t1)] font-sans leading-relaxed"
+                  />
+                  <div className="flex items-center justify-between gap-1.5 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-[var(--t3)] font-mono">COLOR:</span>
+                      <button
+                        onClick={() => setCustomNoteColor('yellow')}
+                        className={`w-4 h-4 rounded-full bg-yellow-200 border hover:scale-110 transition cursor-pointer ${customNoteColor === 'yellow' ? 'ring-2 ring-red-500 border-yellow-400' : 'border-yellow-300'}`}
+                      />
+                      <button
+                        onClick={() => setCustomNoteColor('green')}
+                        className={`w-4 h-4 rounded-full bg-emerald-300 border hover:scale-110 transition cursor-pointer ${customNoteColor === 'green' ? 'ring-2 ring-red-500 border-emerald-500' : 'border-emerald-400'}`}
+                      />
+                      <button
+                        onClick={() => setCustomNoteColor('pink')}
+                        className={`w-4 h-4 rounded-full bg-pink-300 border hover:scale-110 transition cursor-pointer ${customNoteColor === 'pink' ? 'ring-2 ring-red-500 border-pink-500' : 'border-pink-400'}`}
+                      />
+                    </div>
+                    <button
+                      onClick={() => handleSaveCustomNote(customNoteText, customNoteColor)}
+                      disabled={!customNoteText.trim()}
+                      className="bg-[var(--gd)] text-[var(--bg)] px-3 py-1.5 rounded-xl font-bold uppercase tracking-wider text-[10px] disabled:opacity-40 hover:opacity-90 transition cursor-pointer"
+                    >
+                      Save Note
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Cancel Bottom Link */}
+            <div className="flex justify-end border-t border-[var(--bd)]/30 pt-1.5 mt-0.5">
+              <button
+                onClick={() => {
+                  setShowHighlightPopup(false);
+                  window.getSelection()?.removeAllRanges();
+                }}
+                className="text-[10px] px-2 py-1 rounded hover:bg-[var(--ra)] text-[var(--t2)] hover:text-white font-sans font-bold cursor-pointer"
+              >
+                Close Menu
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Existing Annotations Pop-up Viewer/Editor */}
+        {activeNoteHighlight && (
+          <div 
+            className="fixed z-50 bg-[var(--sur)] border-2 border-[var(--gd)] p-4 rounded-2xl shadow-2xl w-80 text-left font-sans text-xs animate-fade-in flex flex-col gap-3"
+            style={{ 
+              top: `${popupPosition.y - 120}px`, 
+              left: `${popupPosition.x}px`,
+              transform: 'translateX(-50%)'
+            }}
+          >
+            <div className="flex justify-between items-center border-b border-[var(--bd)] pb-1.5">
+              <span className="font-bold text-[var(--gd)] uppercase font-mono tracking-wider flex items-center gap-1.5">
+                <PenTool className="w-3.5 h-3.5" />
+                Personal Study Note
+              </span>
+              <button 
+                onClick={() => {
+                  setActiveNoteHighlight(null);
+                  setIsEditingNote(false);
+                }} 
+                className="text-[var(--t3)] hover:text-[var(--t1)] font-bold cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-[var(--ra)] p-2 rounded-xl border border-[var(--bd)]/50 italic text-[11px] text-[var(--t2)] max-h-16 overflow-y-auto leading-relaxed font-serif">
+              "{activeNoteHighlight.text}"
+            </div>
+
+            {isEditingNote ? (
+              <div className="space-y-2">
+                <textarea
+                  rows={3}
+                  value={editingNoteText}
+                  onChange={(e) => setEditingNoteText(e.target.value)}
+                  className="w-full bg-[var(--ra)] border border-[var(--bd)] text-[var(--t1)] rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-[var(--gd)] font-sans"
+                  placeholder="Update your personal note..."
+                />
+                <div className="flex justify-end gap-2">
+                  <button 
+                    onClick={() => setIsEditingNote(false)}
+                    className="px-2.5 py-1 rounded bg-[var(--ra)] hover:bg-[var(--bd)] font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const updated = highlights.map(h => {
+                        if (h.text === activeNoteHighlight.text && h.pIdx === activeNoteHighlight.pIdx && h.start === activeNoteHighlight.start) {
+                          return { ...h, note: editingNoteText.trim() };
+                        }
+                        return h;
+                      });
+                      setHighlights(updated);
+                      localStorage.setItem(`cseguide_highlights_${chapter.id}_${currentTopic.id}`, JSON.stringify(updated));
+                      setActiveNoteHighlight(null);
+                      setIsEditingNote(false);
+                    }}
+                    className="px-2.5 py-1 rounded bg-[var(--gd)] text-[var(--bg)] font-bold cursor-pointer"
+                  >
+                    Save Note
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-[var(--t1)] font-serif leading-relaxed whitespace-pre-line text-sm bg-[var(--ra)]/50 p-2.5 rounded-xl border border-[var(--bd)]/20 shadow-inner">
+                  {activeNoteHighlight.note || "No note written."}
+                </p>
+                <div className="flex justify-between items-center border-t border-[var(--bd)]/50 pt-2">
+                  <button
+                    onClick={() => {
+                      handleRemoveSpecificHighlightInstance(activeNoteHighlight);
+                      setActiveNoteHighlight(null);
+                    }}
+                    className="text-red-500 hover:text-red-700 font-bold hover:bg-red-500/10 p-1.5 rounded transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Note
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsEditingNote(true);
+                      setEditingNoteText(activeNoteHighlight.note || '');
+                    }}
+                    className="text-[var(--gd)] hover:text-white font-bold hover:bg-[var(--ra)] px-3 py-1.5 rounded transition cursor-pointer flex items-center gap-1 border border-[var(--bd)]"
+                  >
+                    <PenTool className="w-3.5 h-3.5" />
+                    Edit Note
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

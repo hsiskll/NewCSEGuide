@@ -3,11 +3,19 @@ import {
   Folder as FolderIcon, Plus, BookOpen, Trash2, Import, 
   AlertCircle, FileText, X, FolderPlus, UploadCloud, Upload,
   Landmark, Coins, Hourglass, Globe, Leaf, Cpu, Globe2, Users, Heart, PenTool, Shield, Flame, Newspaper, BarChart3, HelpCircle, Edit2, Check, ArrowRight,
-  RefreshCw
+  RefreshCw, Copy, ChevronLeft, FolderOpen
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { Folder, Chapter, Topic, SubjectType, TopicProgress, Flashcard } from '../types';
+
+interface PendingImport {
+  id: string;
+  fileName: string;
+  parsedData: any;
+  targetFolderId: string;
+  unsure: boolean;
+}
 
 // Configure pdfjs worker
 try {
@@ -134,9 +142,11 @@ export default function ChapterLibraryTab({
   ]);
 
   const [showImportModal, setShowImportModal] = useState(false);
+  const [pendingImports, setPendingImports] = useState<PendingImport[]>([]);
   const [pastedJson, setPastedJson] = useState('');
   const [importError, setImportError] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
 
   // Document Import (PDF & Word) States
   const [showDocImportModal, setShowDocImportModal] = useState(false);
@@ -305,30 +315,48 @@ export default function ChapterLibraryTab({
     reader.readAsArrayBuffer(file);
   };
 
-  const handleJsonFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result as string;
-        const parsed = JSON.parse(text); 
-        setPastedJson(text);
-        setImportError('');
+  const handleJsonFiles = async (files: FileList | File[]) => {
+    setImportError('');
+    const list: PendingImport[] = [];
+    const errors: string[] = [];
 
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const text = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = (ev) => resolve(ev.target?.result as string);
+          r.onerror = () => reject(new Error('File reading error'));
+          r.readAsText(file);
+        });
+
+        const parsed = JSON.parse(text);
         const importedTopics = parsed.topics || parsed.sections;
         if (!importedTopics || !Array.isArray(importedTopics) || importedTopics.length === 0) {
-          throw new Error("Missing or empty 'topics' array inside the uploaded JSON.");
+          throw new Error("Missing or empty 'topics' array inside JSON.");
         }
 
-        setParsedImportData(parsed);
         const { folderId, unsure } = findClosestFolder(parsed);
-        setTargetFolderIdForImport(folderId);
-        setShowUnsureWarning(unsure);
-        setImportStage('preview');
+        list.push({
+          id: `pimp-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+          fileName: file.name,
+          parsedData: parsed,
+          targetFolderId: folderId,
+          unsure: unsure
+        });
       } catch (err: any) {
-        setImportError(err.message || 'Invalid JSON file. Please ensure it is a valid JSON document.');
+        errors.push(`"${file.name}": ${err.message || 'Invalid format'}`);
       }
-    };
-    reader.readAsText(file);
+    }
+
+    if (errors.length > 0) {
+      setImportError(`Some files had errors:\n${errors.join('\n')}`);
+    }
+
+    if (list.length > 0) {
+      setPendingImports(list);
+      setImportStage('preview');
+    }
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -345,30 +373,116 @@ export default function ChapterLibraryTab({
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleJsonFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleJsonFiles(e.dataTransfer.files);
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleJsonFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      handleJsonFiles(e.target.files);
     }
   };
 
-  // Sample JSON template for importing chapters
+  // Sample JSON template for importing chapters with all subsections included
   const SAMPLE_IMPORT_JSON = JSON.stringify({
     title: "Article 21: Right to Life and Personal Liberty",
     description: "Analyses the expanding horizons of Article 21, including environmental rights, privacy, and judicial activism.",
     source: "Supreme Court Rulings & Laxmikanth",
+    chapter_intro: "Article 21 is the most organic and progressive provision in our Constitution, representing the soul of fundamental democratic freedoms.",
+    chapter_background: "Originates from the Magna Carta (Clause 39), English Common Law, and adapted through the Irish Constitution.",
+    important_articles: [
+      {
+        article: "Article 21",
+        title: "Protection of Life and Personal Liberty",
+        explanation: "No person shall be deprived of his life or personal liberty except according to procedure established by law."
+      }
+    ],
+    metadata: {
+      chapter_number: 1,
+      book: "M. Laxmikanth - Indian Polity",
+      part: "Part III: Fundamental Rights",
+      articles: "Articles 12-35",
+      subject: "Polity"
+    },
     topics: [
       {
         title: "1. Dual Dimensions of Article 21",
-        full_text: "Article 21 declares that no person shall be deprived of his life or personal liberty except according to procedure established by law. In the famous Gopalan case (1950), the Supreme Court took a narrow view. However, in the Maneka Gandhi case (1978), the court reversed its stand, establishing that procedure must be just, fair, and reasonable."
-      },
-      {
-        title: "2. The Doctrine of Due Process of Law",
-        full_text: "Through the Maneka case, the Supreme Court introduced the American concept of 'Due Process of Law' into Article 21, making the right to life protection available not just against arbitrary executive action but also against arbitrary legislative action."
+        full_text: "Article 21 declares that no person shall be deprived of his life or personal liberty except according to procedure established by law. In the famous Gopalan case (1950), the Supreme Court took a narrow view. However, in the Maneka Gandhi case (1978), the court reversed its stand, establishing that procedure must be just, fair, and reasonable.",
+        order: 1,
+        key_concepts: [
+          {
+            concept: "Procedure Established by Law",
+            explanation: "The doctrine originating in England that means a law is valid if it has been passed through the correct formal parliamentary process.",
+            article: "Article 21",
+            exam_angle: "UPSC GS Paper II - Comparison of Indian and US constitutional systems."
+          }
+        ],
+        flashcards: [
+          {
+            front: "Which famous case reversed the Gopalan judgment and established the principle of 'Due Process' in Article 21?",
+            back: "Maneka Gandhi v. Union of India (1978)."
+          }
+        ],
+        lesson_slides: [
+          {
+            slide_number: 1,
+            title: "Evolution of Article 21",
+            type: "Concept Overview",
+            content: "We trace how Article 21 expanded from a literal shield against executive high-handedness (Gopalan) into an active, positive sword for human dignity (Maneka)."
+          }
+        ],
+        mains_questions: [
+          {
+            question: "Examine the dynamic expansion of Article 21 of the Indian Constitution in light of judicial activism.",
+            answer_skeleton: {
+              intro: "Introduce Article 21 and the shift from Gopalan (1950) to Maneka Gandhi (1978).",
+              body_points: [
+                "The expansion of right to life to include livelihood, clean environment, privacy (Puttaswamy judgment), and medical aid.",
+                "How judicial activism through PILs became a prime engine for this expansion.",
+                "The shift from 'Procedure Established by Law' to 'Due Process of Law' (just, fair, and reasonable)."
+              ],
+              conclusion: "Conclude that Article 21 acts as a living, organic charter that safeguards Indian democracy."
+            }
+          }
+        ],
+        socratic_questions: [
+          "If liberty is absolute, why is it bound by any procedural law at all?",
+          "How does the judiciary balance public security with personal privacy?"
+        ],
+        feynman_prompts: [
+          "Explain the difference between Gopalan and Maneka cases as if explaining to a 10-year-old child.",
+          "Describe 'Due Process of Law' in your own words without using constitutional jargon."
+        ],
+        ca_angles: [
+          "Recent Supreme Court directives on the 'Right to Be Forgotten' as an offshoot of Puttaswamy Right to Privacy."
+        ],
+        mcqs: [
+          {
+            id: "mcq_art21_1",
+            question: "Which of the following holds correct regarding the 'Procedure Established by Law'?\n1. It is a concept borrowed from the British Constitution.\n2. It prevents arbitrary legislative actions.\nSelect the correct answer:",
+            options: ["1 only", "2 only", "Both 1 and 2", "Neither 1 nor 2"],
+            answer: "A",
+            explanation: "Procedure Established by Law is a British concept. Under this doctrine, a law is valid if it meets procedural standards, even if it is unjust. Thus, it initially only protected against arbitrary executive action, not legislative action (which was corrected in Maneka Gandhi via Due Process)."
+          }
+        ],
+        pyqs: [
+          {
+            id: "pyq_art21_1",
+            year: 2019,
+            difficulty: "medium",
+            question: "Right to Privacy is protected as an intrinsic part of Right to Life and Personal Liberty. Which of the following in the Constitution of India correctly and appropriately imply the above statement?",
+            options: [
+              "Article 14 and the provisions under the 42nd Amendment.",
+              "Article 17 and the Directive Principles of State Policy in Part IV.",
+              "Article 21 and the freedoms guaranteed in Part III.",
+              "Article 24 and the provisions under the 44th Amendment."
+            ],
+            answer: "C",
+            answer_explanation: "In the landmark K.S. Puttaswamy case (2017), a nine-judge bench of the Supreme Court unanimously held that the Right to Privacy is a Fundamental Right guaranteed under Article 21 and Part III of the Constitution.",
+            topic_tags: ["Fundamental Rights", "Article 21", "Privacy"]
+          }
+        ]
       }
     ]
   }, null, 2);
@@ -520,13 +634,17 @@ export default function ChapterLibraryTab({
       
       const importedTopics = parsed.topics || parsed.sections;
       if (!importedTopics || !Array.isArray(importedTopics) || importedTopics.length === 0) {
-        throw new Error("Missing or empty 'topics' array inside the uploaded JSON.");
+        throw new Error("Missing or empty 'topics' array inside the pasted JSON.");
       }
 
-      setParsedImportData(parsed);
       const { folderId, unsure } = findClosestFolder(parsed);
-      setTargetFolderIdForImport(folderId);
-      setShowUnsureWarning(unsure);
+      setPendingImports([{
+        id: `pimp-pasted-${Date.now()}`,
+        fileName: 'Pasted Raw JSON Text',
+        parsedData: parsed,
+        targetFolderId: folderId,
+        unsure: unsure
+      }]);
       setImportStage('preview');
     } catch (err: any) {
       setImportError(err.message || 'Invalid JSON format. Please check the structure and try again.');
@@ -534,92 +652,110 @@ export default function ChapterLibraryTab({
   };
 
   const handleConfirmImport = () => {
-    if (!parsedImportData) return;
+    if (pendingImports.length === 0) return;
     setImportError('');
 
     try {
-      const parsed = parsedImportData;
-      const chapterTitle = parsed.title || parsed.metadata?.chapter_title || parsed.chapter_title || "Untitled Chapter";
-      const chapterDesc = parsed.description || parsed.chapter_intro || "Imported Syllabus Chapter.";
-      const chapterSource = parsed.source || parsed.metadata?.book || "Imported Resource";
-      const chapterIntro = parsed.chapter_intro || parsed.description || "";
-      const chapterBackground = parsed.chapter_background || "";
-      const importedTopics = parsed.topics || parsed.sections;
+      let firstImportedFolderId = '';
+      const importedChapterTitles: string[] = [];
 
-      const targetFolder = folders.find(f => f.id === targetFolderIdForImport) || folders[0];
-      if (!targetFolder) throw new Error('Target cabinet is invalid.');
+      pendingImports.forEach((p, idx) => {
+        const parsed = p.parsedData;
+        const chapterTitle = parsed.title || parsed.metadata?.chapter_title || parsed.chapter_title || "Untitled Chapter";
+        const chapterDesc = parsed.description || parsed.chapter_intro || "Imported Syllabus Chapter.";
+        const chapterSource = parsed.source || parsed.metadata?.book || "Imported Resource";
+        const chapterIntro = parsed.chapter_intro || parsed.description || "";
+        const chapterBackground = parsed.chapter_background || "";
+        const importedTopics = parsed.topics || parsed.sections;
 
-      const cleanTopics: Topic[] = importedTopics.map((s: any, idx: number) => {
-        const bodyText = s.full_text || s.raw_text || s.body || "";
-        const topicTitle = s.title || `Topic ${idx + 1}`;
-        
-        return {
-          id: s.id || `t-imp-${idx}-${Date.now()}`,
-          title: String(topicTitle),
-          full_text: String(bodyText),
-          order: typeof s.order === 'number' ? s.order : (idx + 1),
-          key_concepts: Array.isArray(s.key_concepts) ? s.key_concepts : [],
-          flashcards: Array.isArray(s.flashcards) ? s.flashcards : [],
-          pyq_ids: Array.isArray(s.pyq_ids) ? s.pyq_ids : [],
-          mains_questions: Array.isArray(s.mains_questions) ? s.mains_questions : [],
-          socratic_questions: Array.isArray(s.socratic_questions) ? s.socratic_questions : [],
-          feynman_prompts: Array.isArray(s.feynman_prompts) ? s.feynman_prompts : [],
-          ca_angles: Array.isArray(s.ca_angles) ? s.ca_angles : [],
-          lesson_slides: Array.isArray(s.lesson_slides) ? s.lesson_slides : [
-            {
-              slide_number: 1,
-              title: String(topicTitle),
-              type: "Overview",
-              content: String(bodyText).substring(0, 200) + "..."
-            }
-          ]
+        const targetFolder = folders.find(f => f.id === p.targetFolderId) || folders[0];
+        if (!targetFolder) throw new Error('Target cabinet is invalid.');
+
+        if (idx === 0) {
+          firstImportedFolderId = targetFolder.id;
+        }
+
+        const cleanTopics: Topic[] = importedTopics.map((s: any, tIdx: number) => {
+          const bodyText = s.full_text || s.raw_text || s.body || "";
+          const topicTitle = s.title || `Topic ${tIdx + 1}`;
+          
+          return {
+            id: s.id || `t-imp-${tIdx}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            title: String(topicTitle),
+            full_text: String(bodyText),
+            order: typeof s.order === 'number' ? s.order : (tIdx + 1),
+            key_concepts: Array.isArray(s.key_concepts) ? s.key_concepts : [],
+            flashcards: Array.isArray(s.flashcards) ? s.flashcards : [],
+            pyq_ids: Array.isArray(s.pyq_ids) ? s.pyq_ids : [],
+            mcqs: Array.isArray(s.mcqs) ? s.mcqs : [],
+            pyqs: Array.isArray(s.pyqs) ? s.pyqs : [],
+            mains_questions: Array.isArray(s.mains_questions) ? s.mains_questions : [],
+            socratic_questions: Array.isArray(s.socratic_questions) ? s.socratic_questions : [],
+            feynman_prompts: Array.isArray(s.feynman_prompts) ? s.feynman_prompts : [],
+            ca_angles: Array.isArray(s.ca_angles) ? s.ca_angles : [],
+            lesson_slides: Array.isArray(s.lesson_slides) ? s.lesson_slides : [
+              {
+                slide_number: 1,
+                title: String(topicTitle),
+                type: "Overview",
+                content: String(bodyText).substring(0, 200) + "..."
+              }
+            ]
+          };
+        });
+
+        const newCh: Chapter = {
+          id: `ch-imp-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+          folderId: targetFolder.id,
+          title: String(chapterTitle),
+          description: String(chapterDesc),
+          subject: targetFolder.subject,
+          source: String(chapterSource),
+          metadata: {
+            book: String(chapterSource),
+            chapter_number: parsed.metadata?.chapter_number || (chapters.length + idx + 1),
+            chapter_title: String(chapterTitle),
+            part: parsed.metadata?.part || '',
+            articles: parsed.metadata?.articles || '',
+            subject: targetFolder.name
+          },
+          topics: cleanTopics,
+          chapter_intro: String(chapterIntro),
+          chapter_background: String(chapterBackground),
+          important_articles: Array.isArray(parsed.important_articles) ? parsed.important_articles : [],
+          createdAt: new Date().toISOString()
         };
+
+        if (onImportChapter) {
+          onImportChapter(newCh);
+        } else {
+          onAddChapter(newCh);
+        }
+        importedChapterTitles.push(chapterTitle);
       });
 
-      const newCh: Chapter = {
-        id: `ch-imp-${Date.now()}`,
-        folderId: targetFolder.id,
-        title: String(chapterTitle),
-        description: String(chapterDesc),
-        subject: targetFolder.subject,
-        source: String(chapterSource),
-        metadata: {
-          book: String(chapterSource),
-          chapter_number: parsed.metadata?.chapter_number || (chapters.length + 1),
-          chapter_title: String(chapterTitle),
-          part: parsed.metadata?.part || '',
-          articles: parsed.metadata?.articles || '',
-          subject: targetFolder.name
-        },
-        topics: cleanTopics,
-        chapter_intro: String(chapterIntro),
-        chapter_background: String(chapterBackground),
-        important_articles: Array.isArray(parsed.important_articles) ? parsed.important_articles : [],
-        createdAt: new Date().toISOString()
-      };
-
-      if (onImportChapter) {
-        onImportChapter(newCh);
-      } else {
-        onAddChapter(newCh);
+      // Automatically switch focus to target cabinet folder of first import
+      if (firstImportedFolderId) {
+        setActiveFolderId(firstImportedFolderId);
       }
 
-      // Automatically switch focus to target cabinet folder so user sees it loaded!
-      setActiveFolderId(targetFolder.id);
-
       // Set elegant success toast message
-      setSuccessToast(`Successfully imported "${chapterTitle}" to "${targetFolder.name}" cabinet!`);
+      const successMsg = pendingImports.length === 1 
+        ? `Successfully imported "${importedChapterTitles[0]}"!`
+        : `Successfully imported ${pendingImports.length} chapters: ${importedChapterTitles.join(', ')}`;
+      
+      setSuccessToast(successMsg);
       setTimeout(() => {
         setSuccessToast(null);
       }, 6000);
 
       // Reset import state
       setPastedJson('');
-      setParsedImportData(null);
+      setPendingImports([]);
       setImportStage('input');
       setShowImportModal(false);
     } catch (err: any) {
-      setImportError(err.message || 'Failed to complete import.');
+      setImportError(err.message || 'Failed to complete batch import.');
     }
   };
 
@@ -642,263 +778,333 @@ export default function ChapterLibraryTab({
           </button>
         </div>
       )}
-      
-      {/* Subject Folders Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--bd)] pb-4">
-        <div>
-          <h2 className="font-serif text-xl font-bold text-[var(--t1)]">Study Folders Directory</h2>
-          <p className="text-xs text-[var(--t2)] font-serif">Select an GS Subject folder to access and manage structured UPSC readings.</p>
-        </div>
-        <div className="flex gap-2.5 shrink-0">
-          <button
-            onClick={() => setShowFolderModal(true)}
-            className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200"
-          >
-            <FolderPlus className="w-4 h-4 text-[var(--gd)]" />
-            Add Folder
-          </button>
-          {activeFolderId && (
-            <>
+
+      {activeFolder ? (
+        /* INSIDE OPENED FOLDER VIEW */
+        <div className="space-y-6">
+          {/* Breadcrumb & Navigation Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--bd)] pb-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setActiveFolderId(null)}
+                className="flex items-center gap-1.5 bg-[var(--ra)] hover:bg-[var(--sur)] text-[var(--t1)] border border-[var(--bd)] px-3 py-1.5 rounded-2xl text-xs font-bold transition duration-200 cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Back to Cabinets
+              </button>
+              <div className="h-5 w-[1px] bg-[var(--bd)]/60" />
+              <div>
+                <span className="text-[9px] uppercase tracking-widest font-bold text-[var(--gd)]">{activeFolder.subject} GS Cabinet</span>
+                <h2 className="font-serif text-lg font-bold text-[var(--t1)] flex items-center gap-1.5 mt-0.5">
+                  <FolderOpen className="w-4 h-4 text-[var(--gd)] shrink-0" />
+                  {activeFolder.name}
+                </h2>
+              </div>
+            </div>
+
+            {/* Cabinet-specific actions */}
+            <div className="flex items-center gap-2 flex-wrap sm:self-center">
               <button
                 onClick={() => setShowImportModal(true)}
-                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200"
+                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200 cursor-pointer"
               >
                 <Import className="w-4 h-4 text-[var(--gd)]" />
                 Import JSON
               </button>
               <button
                 onClick={() => setShowDocImportModal(true)}
-                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200"
+                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200 cursor-pointer"
               >
                 <Upload className="w-4 h-4 text-[var(--gd)]" />
                 Import Document
               </button>
               <button
                 onClick={() => setShowChapterModal(true)}
-                className="bg-[var(--gd)] text-[var(--bg)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200 shadow-md"
+                className="bg-[var(--gd)] text-[var(--bg)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200 shadow-md cursor-pointer hover:opacity-95"
               >
                 <Plus className="w-4 h-4" />
                 Add Chapter
               </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Folders Row Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        {folders.map(folder => {
-          const isActive = folder.id === activeFolderId;
-          const count = chapters.filter(c => c.folderId === folder.id).length;
-          const isCustom = !DEFAULT_FOLDER_IDS.includes(folder.id);
-          const FolderIconComponent = getFolderIcon(folder.name);
-
-          // Calculate progress percentage
-          const folderChapters = chapters.filter(c => c.folderId === folder.id);
-          const folderChapterIds = folderChapters.map(c => c.id);
-          let totalPoints = 0;
-          let completedPoints = 0;
-          folderChapters.forEach(c => {
-            (c.topics || []).forEach(t => {
-              totalPoints += 4;
-              const prog = topicProgress?.[t.id];
-              if (prog) {
-                if (prog.read) completedPoints += 1;
-                if (prog.slides) completedPoints += 1;
-                if (prog.concepts) completedPoints += 1;
-                if (prog.flashcards) completedPoints += 1;
-              }
-            });
-          });
-          const progressPercentage = totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0;
-
-          // Calculate PYQs count
-          const pyqsCount = folderChapters.reduce((sum, c) => 
-            sum + (c.topics || []).reduce((tSum, t) => tSum + (t.pyqs?.length || t.pyq_ids?.length || 0), 0), 0
-          );
-
-          // Calculate due cards count
-          const dueCardsCount = (flashcards || []).filter(f => 
-            f.chapterId && folderChapterIds.includes(f.chapterId) && 
-            new Date(f.nextReviewDate) <= new Date()
-          ).length;
-
-          return (
-            <div
-              key={folder.id}
-              onClick={() => setActiveFolderId(folder.id)}
-              className={`p-4 rounded-3xl border-2 text-left cursor-pointer transition-all duration-200 relative overflow-hidden group ${
-                isActive 
-                  ? `${folder.color} ring-2 ring-[var(--gd)] border-transparent shadow-md`
-                  : 'bg-[var(--sur)] hover:bg-[var(--ra)] border-[var(--bd)] text-[var(--t1)]'
-              }`}
-            >
-              {/* Custom Folder Management Action Icons */}
-              {isCustom && (
-                <div className="absolute top-2.5 right-2.5 flex gap-1 z-10" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    onClick={() => {
-                      setEditingFolderId(folder.id);
-                      setEditingFolderName(folder.name);
-                    }}
-                    className="p-1 text-[var(--t3)] hover:text-[var(--gd)] rounded-lg hover:bg-[var(--ra)]/80 transition"
-                    title="Rename Cabinet"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setFolderToDelete(folder)}
-                    className="p-1 text-[var(--t3)] hover:text-red-500 rounded-lg hover:bg-red-500/10 transition"
-                    title="Delete Cabinet"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              <div className="flex items-start justify-between pr-8">
-                <div className="flex items-center gap-2">
-                  <div className={`p-1.5 rounded-xl ${isActive ? 'bg-white/20 text-white' : 'bg-[var(--ra)] text-[var(--gd)]'}`}>
-                    <FolderIconComponent className="w-5 h-5 shrink-0" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className={`text-xs font-bold uppercase tracking-wide truncate max-w-[120px] ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>
-                      {folder.name}
-                    </h3>
-                    <p className={`text-[9px] font-serif ${isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}`}>
-                      {folder.subject}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="mt-3.5 space-y-1">
-                <div className="flex justify-between items-center text-[9px]">
-                  <span className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>Progress</span>
-                  <span className={`font-bold ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{progressPercentage}%</span>
-                </div>
-                <div className={`w-full h-1 rounded-full overflow-hidden ${isActive ? 'bg-indigo-950/50' : 'bg-[var(--ra)]'}`}>
-                  <div 
-                    className={`h-full transition-all duration-300 ${isActive ? 'bg-white' : 'bg-[var(--gd)]'}`}
-                    style={{ width: `${progressPercentage}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Dynamic stats list */}
-              <div className="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-dashed border-[var(--bd)]/40 text-[9px] font-mono">
-                <div className="text-center">
-                  <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>CH</p>
-                  <p className={`font-bold text-xs ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{count}</p>
-                </div>
-                <div className="text-center border-x border-[var(--bd)]/30">
-                  <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>PYQ</p>
-                  <p className={`font-bold text-xs ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{pyqsCount}</p>
-                </div>
-                <div className="text-center">
-                  <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>DUE</p>
-                  <p className={`font-bold text-xs ${dueCardsCount > 0 ? 'text-amber-500' : (isActive ? 'text-indigo-200' : 'text-[var(--t3)]')}`}>
-                    {dueCardsCount}
-                  </p>
-                </div>
-              </div>
             </div>
-          );
-        })}
-      </div>
-
-      {/* Chapters list in Active Folder */}
-      {activeFolder ? (
-        <div className="bg-[var(--sur)] rounded-3xl border border-[var(--bd)] shadow-sm overflow-hidden text-left">
-          <div className="bg-[var(--ra)] text-[var(--t1)] px-5 py-4 flex justify-between items-center border-b border-[var(--bd)]">
-            <div>
-              <span className="text-[10px] uppercase tracking-widest font-bold text-[var(--gd)]">{activeFolder.subject} GS Cabinet</span>
-              <h3 className="font-serif font-bold text-lg text-[var(--t1)]">{activeFolder.name}</h3>
-            </div>
-            <span className="text-xs bg-[var(--sur)] text-[var(--gd)] border border-[var(--bd)] px-3 py-1 rounded-xl font-mono">
-              {filteredChapters.length} Chapters total
-            </span>
           </div>
 
-          {filteredChapters.length === 0 ? (
-            <div className="p-10 text-center space-y-4">
-              <div className="mx-auto w-12 h-12 bg-[var(--ra)] border border-[var(--bd)] rounded-full flex items-center justify-center">
-                <BookOpen className="w-6 h-6 text-[var(--gd)]" />
+          {/* Opened Folder Interior Info Banner */}
+          <div className="bg-[var(--sur)] border border-[var(--bd)] rounded-3xl p-5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-6 shadow-sm">
+            <div className="flex items-center gap-3.5">
+              <div className="p-3 bg-[var(--ra)] rounded-2xl text-[var(--gd)] border border-[var(--bd)]/20 shrink-0">
+                {React.createElement(getFolderIcon(activeFolder.name), { className: "w-8 h-8" })}
               </div>
-              <div className="max-w-xs mx-auto">
-                <p className="text-sm font-bold text-[var(--t1)]">This folder is currently empty</p>
-                <p className="text-xs text-[var(--t2)] font-serif mt-1">Begin standard core preparation by importing custom readings via JSON, or creating your own.</p>
-              </div>
-              <div className="flex gap-2 justify-center">
-                <button
-                  onClick={() => setShowImportModal(true)}
-                  className="bg-[var(--ra)] hover:bg-[var(--sur)] border border-[var(--bd)] px-4 py-1.5 rounded-xl text-xs font-bold transition"
-                >
-                  Import Syllabus JSON
-                </button>
-                <button
-                  onClick={() => setShowChapterModal(true)}
-                  className="bg-[var(--gd)] text-[var(--bg)] px-4 py-1.5 rounded-xl text-xs font-bold transition"
-                >
-                  Create Chapter Form
-                </button>
+              <div>
+                <p className="text-[9px] uppercase font-bold tracking-widest text-[var(--t3)] font-mono">Current Folder</p>
+                <h3 className="text-xl font-bold text-[var(--t1)] font-serif mt-0.5">{activeFolder.name}</h3>
+                <p className="text-xs text-[var(--t2)] font-serif">{activeFolder.subject} UPSC Subject Cabinet</p>
               </div>
             </div>
-          ) : (
-            <div className="divide-y divide-[var(--bd)]">
-              {filteredChapters.map(chapter => (
-                <div key={chapter.id} className="p-4 sm:p-5 hover:bg-[var(--ra)]/40 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div className="space-y-1 min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="text-sm font-bold text-[var(--t1)] hover:text-[var(--gd)] transition cursor-pointer font-serif" onClick={() => onSelectChapter(chapter.id)}>
-                        {chapter.title}
-                      </h4>
-                      {chapter.source && (
-                        <span className="text-[9px] uppercase tracking-wider font-mono bg-[var(--ra)] text-[var(--t2)] px-1.5 py-0.5 rounded-lg border border-[var(--bd)]">
-                          Ref: {chapter.source}
-                        </span>
-                      )}
+
+            <div className="flex items-center gap-6 border-t md:border-t-0 md:border-l border-[var(--bd)]/30 pt-4 md:pt-0 md:pl-6 text-sm font-mono self-start md:self-auto">
+              <div className="text-center min-w-[60px]">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--t3)]">Chapters</p>
+                <p className="font-bold text-lg text-[var(--t1)] mt-0.5">{filteredChapters.length}</p>
+              </div>
+              <div className="text-center min-w-[60px] border-x border-[var(--bd)]/30 px-6">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--t3)]">PYQs</p>
+                <p className="font-bold text-lg text-[var(--t1)] mt-0.5">
+                  {filteredChapters.reduce((sum, c) => 
+                    sum + (c.topics || []).reduce((tSum, t) => tSum + (t.pyqs?.length || t.pyq_ids?.length || 0), 0), 0
+                  )}
+                </p>
+              </div>
+              <div className="text-center min-w-[60px]">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--t3)]">Due</p>
+                <p className="font-bold text-lg text-amber-500 mt-0.5">
+                  {(flashcards || []).filter(f => 
+                    f.chapterId && filteredChapters.map(c => c.id).includes(f.chapterId) && 
+                    new Date(f.nextReviewDate) <= new Date()
+                  ).length}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Chapters Shelf inside the Folder Container */}
+          <div className="bg-[var(--sur)] rounded-3xl border border-[var(--bd)] shadow-sm overflow-hidden text-left">
+            <div className="bg-[var(--ra)] text-[var(--t1)] px-5 py-3.5 flex justify-between items-center border-b border-[var(--bd)]">
+              <span className="font-bold text-xs uppercase tracking-wider text-[var(--gd)]">Chapters List ({filteredChapters.length})</span>
+            </div>
+
+            {filteredChapters.length === 0 ? (
+              <div className="p-12 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 bg-[var(--ra)] border border-[var(--bd)] rounded-full flex items-center justify-center animate-bounce">
+                  <BookOpen className="w-6 h-6 text-[var(--gd)]" />
+                </div>
+                <div className="max-w-xs mx-auto">
+                  <p className="text-sm font-bold text-[var(--t1)]">No chapters in this cabinet</p>
+                  <p className="text-xs text-[var(--t2)] font-serif mt-1 leading-relaxed">
+                    This subject folder is currently empty. Start core prep by importing JSON chapters or creating them.
+                  </p>
+                </div>
+                <div className="flex gap-2 justify-center pt-2">
+                  <button
+                    onClick={() => setShowImportModal(true)}
+                    className="bg-[var(--ra)] hover:bg-[var(--sur)] border border-[var(--bd)] px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer text-[var(--t1)]"
+                  >
+                    Import Syllabus JSON
+                  </button>
+                  <button
+                    onClick={() => setShowChapterModal(true)}
+                    className="bg-[var(--gd)] text-[var(--bg)] px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer hover:opacity-90"
+                  >
+                    Create Chapter Form
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--bd)]">
+                {filteredChapters.map(chapter => (
+                  <div key={chapter.id} className="p-4 sm:p-5 hover:bg-[var(--ra)]/40 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm font-bold text-[var(--t1)] hover:text-[var(--gd)] transition cursor-pointer font-serif" onClick={() => onSelectChapter(chapter.id)}>
+                          {chapter.title}
+                        </h4>
+                        {chapter.source && (
+                          <span className="text-[9px] uppercase tracking-wider font-mono bg-[var(--ra)] text-[var(--t2)] px-1.5 py-0.5 rounded-lg border border-[var(--bd)]">
+                            Ref: {chapter.source}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[var(--t2)] font-serif leading-relaxed line-clamp-2 max-w-2xl">{chapter.description}</p>
+                      <div className="flex items-center gap-3 text-[10px] text-[var(--t3)] font-mono">
+                        <span>Topics: {chapter.topics ? chapter.topics.length : 0}</span>
+                        <span>•</span>
+                        <span>Created: {new Date(chapter.createdAt || new Date()).toLocaleDateString()}</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-[var(--t2)] font-serif leading-relaxed line-clamp-2 max-w-2xl">{chapter.description}</p>
-                    <div className="flex items-center gap-3 text-[10px] text-[var(--t3)] font-mono">
-                      <span>Topics: {chapter.topics ? chapter.topics.length : 0}</span>
-                      <span>•</span>
-                      <span>Created: {new Date(chapter.createdAt || new Date()).toLocaleDateString()}</span>
+
+                    <div className="flex gap-2 shrink-0 self-end sm:self-auto items-center">
+                      <button
+                        onClick={() => setMovingChapterId(chapter.id)}
+                        className="bg-[var(--ra)] hover:bg-[var(--gd)] hover:text-[var(--bg)] text-[var(--t1)] border border-[var(--bd)] px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                        title="Move chapter to another cabinet"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" />
+                        <span>Move</span>
+                      </button>
+                      <button
+                        onClick={() => onSelectChapter(chapter.id)}
+                        className="bg-[var(--gd)] text-[var(--bg)] hover:opacity-90 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        Read Chapter
+                      </button>
+                      <button
+                        onClick={() => onDeleteChapter(chapter.id)}
+                        className="text-red-500 hover:bg-red-500/10 p-2 rounded-xl transition border border-transparent hover:border-red-500/20 cursor-pointer"
+                        title="Delete reading material"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ROOT DIRECTORY VIEW */
+        <div className="space-y-6">
+          {/* Subject Folders Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--bd)] pb-4">
+            <div>
+              <h2 className="font-serif text-xl font-bold text-[var(--t1)]">Study Folders Directory</h2>
+              <p className="text-xs text-[var(--t2)] font-serif">Select a GS Subject folder to access and manage structured UPSC readings.</p>
+            </div>
+            <div className="flex gap-2.5 shrink-0">
+              <button
+                onClick={() => setShowFolderModal(true)}
+                className="bg-[var(--sur)] hover:bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] px-3.5 py-2 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition duration-200 cursor-pointer"
+              >
+                <FolderPlus className="w-4 h-4 text-[var(--gd)]" />
+                Add Folder
+              </button>
+            </div>
+          </div>
+
+          {/* Folders Row Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {folders.map(folder => {
+              const isActive = folder.id === activeFolderId;
+              const count = chapters.filter(c => c.folderId === folder.id).length;
+              const isCustom = !DEFAULT_FOLDER_IDS.includes(folder.id);
+              const FolderIconComponent = getFolderIcon(folder.name);
+
+              // Calculate progress percentage
+              const folderChapters = chapters.filter(c => c.folderId === folder.id);
+              const folderChapterIds = folderChapters.map(c => c.id);
+              let totalPoints = 0;
+              let completedPoints = 0;
+              folderChapters.forEach(c => {
+                (c.topics || []).forEach(t => {
+                  totalPoints += 4;
+                  const prog = topicProgress?.[t.id];
+                  if (prog) {
+                    if (prog.read) completedPoints += 1;
+                    if (prog.slides) completedPoints += 1;
+                    if (prog.concepts) completedPoints += 1;
+                    if (prog.flashcards) completedPoints += 1;
+                  }
+                });
+              });
+              const progressPercentage = totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0;
+
+              // Calculate PYQs count
+              const pyqsCount = folderChapters.reduce((sum, c) => 
+                sum + (c.topics || []).reduce((tSum, t) => tSum + (t.pyqs?.length || t.pyq_ids?.length || 0), 0), 0
+              );
+
+              // Calculate due cards count
+              const dueCardsCount = (flashcards || []).filter(f => 
+                f.chapterId && folderChapterIds.includes(f.chapterId) && 
+                new Date(f.nextReviewDate) <= new Date()
+              ).length;
+
+              return (
+                <div
+                  key={folder.id}
+                  onClick={() => setActiveFolderId(folder.id)}
+                  className={`p-4 rounded-3xl border-2 text-left cursor-pointer transition-all duration-200 relative overflow-hidden group ${
+                    isActive 
+                      ? `${folder.color} ring-2 ring-[var(--gd)] border-transparent shadow-md`
+                      : 'bg-[var(--sur)] hover:bg-[var(--ra)] border-[var(--bd)] text-[var(--t1)] hover:border-[var(--gd)]/50'
+                  }`}
+                >
+                  {/* Custom Folder Management Action Icons */}
+                  {isCustom && (
+                    <div className="absolute top-2.5 right-2.5 flex gap-1 z-10" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => {
+                          setEditingFolderId(folder.id);
+                          setEditingFolderName(folder.name);
+                        }}
+                        className="p-1 text-[var(--t3)] hover:text-[var(--gd)] rounded-lg hover:bg-[var(--ra)]/80 transition"
+                        title="Rename Cabinet"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setFolderToDelete(folder)}
+                        className="p-1 text-[var(--t3)] hover:text-red-500 rounded-lg hover:bg-red-500/10 transition"
+                        title="Delete Cabinet"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-start justify-between pr-8">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-xl ${isActive ? 'bg-white/20 text-white' : 'bg-[var(--ra)] text-[var(--gd)]'}`}>
+                        <FolderIconComponent className="w-5 h-5 shrink-0" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className={`text-xs font-bold uppercase tracking-wide truncate max-w-[120px] ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>
+                          {folder.name}
+                        </h3>
+                        <p className={`text-[9px] font-serif ${isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}`}>
+                          {folder.subject}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
-                   <div className="flex gap-2 shrink-0 self-end sm:self-auto items-center">
-                    <button
-                      onClick={() => setMovingChapterId(chapter.id)}
-                      className="bg-[var(--ra)] hover:bg-[var(--gd)] hover:text-[var(--bg)] text-[var(--t1)] border border-[var(--bd)] px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1"
-                      title="Move chapter to another cabinet"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" />
-                      <span>Move</span>
-                    </button>
-                    <button
-                      onClick={() => onSelectChapter(chapter.id)}
-                      className="bg-[var(--gd)] text-[var(--bg)] hover:opacity-90 px-3.5 py-1.5 rounded-xl text-xs font-bold transition"
-                    >
-                      Read Chapter
-                    </button>
-                    <button
-                      onClick={() => onDeleteChapter(chapter.id)}
-                      className="text-red-500 hover:bg-red-500/10 p-2 rounded-xl transition border border-transparent hover:border-red-500/20"
-                      title="Delete reading material"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  {/* Progress bar */}
+                  <div className="mt-3.5 space-y-1">
+                    <div className="flex justify-between items-center text-[9px]">
+                      <span className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>Progress</span>
+                      <span className={`font-bold ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{progressPercentage}%</span>
+                    </div>
+                    <div className={`w-full h-1 rounded-full overflow-hidden ${isActive ? 'bg-indigo-950/50' : 'bg-[var(--ra)]'}`}>
+                      <div 
+                        className={`h-full transition-all duration-300 ${isActive ? 'bg-white' : 'bg-[var(--gd)]'}`}
+                        style={{ width: `${progressPercentage}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Dynamic stats list */}
+                  <div className="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-dashed border-[var(--bd)]/40 text-[9px] font-mono">
+                    <div className="text-center">
+                      <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>CH</p>
+                      <p className={`font-bold text-xs ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{count}</p>
+                    </div>
+                    <div className="text-center border-x border-[var(--bd)]/30">
+                      <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>PYQ</p>
+                      <p className={`font-bold text-xs ${isActive ? 'text-white' : 'text-[var(--t1)]'}`}>{pyqsCount}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className={isActive ? 'text-indigo-200' : 'text-[var(--t3)]'}>DUE</p>
+                      <p className={`font-bold text-xs ${dueCardsCount > 0 ? 'text-amber-500' : (isActive ? 'text-indigo-200' : 'text-[var(--t3)]')}`}>
+                        {dueCardsCount}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              ))}
+              );
+            })}
+          </div>
+
+          {/* Directory Empty / Guide State */}
+          <div className="p-10 text-center bg-[var(--sur)] rounded-3xl border border-[var(--bd)] border-dashed max-w-xl mx-auto space-y-3.5 mt-4">
+            <div className="w-10 h-10 bg-[var(--ra)] rounded-full flex items-center justify-center mx-auto text-[var(--gd)]">
+              <FolderIcon className="w-5 h-5" />
             </div>
-          )}
-        </div>
-      ) : (
-        <div className="p-8 text-center text-[var(--t3)] italic bg-[var(--sur)] rounded-3xl border border-[var(--bd)]">
-          No folder selected. Create or select a subject folder above to unlock resources.
+            <div className="space-y-1">
+              <h4 className="font-serif font-bold text-sm text-[var(--t1)]">Cabinet Directory Dashboard</h4>
+              <p className="text-xs text-[var(--t2)] font-serif max-w-sm mx-auto leading-relaxed">
+                Choose a GS Subject cabinet folder from the grid above to navigate inside. Once inside, you can access your chapters, run UPSC mock tests, and practice flashcards.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1106,7 +1312,7 @@ export default function ChapterLibraryTab({
                 onClick={() => {
                   setShowImportModal(false);
                   setImportStage('input');
-                  setParsedImportData(null);
+                  setPendingImports([]);
                 }} 
                 className="text-[var(--t3)] hover:text-[var(--t1)]"
               >
@@ -1133,16 +1339,17 @@ export default function ChapterLibraryTab({
                     type="file"
                     id="json_file_upload"
                     accept=".json"
+                    multiple
                     className="hidden"
                     onChange={handleFileChange}
                   />
                   <UploadCloud className="w-10 h-10 text-[var(--gd)] animate-pulse" />
                   <div className="space-y-1">
                     <p className="text-xs font-bold text-[var(--t1)] font-sans">
-                      Drag & Drop your Syllabus JSON file here, or <span className="text-[var(--gd)] hover:underline">browse files</span>
+                      Drag & Drop your Syllabus JSON file(s) here, or <span className="text-[var(--gd)] hover:underline">browse files</span>
                     </p>
                     <p className="text-[10px] text-[var(--t3)] font-sans">
-                      Loads local files instantly (Laxmikanth or custom syllabus chapter structures)
+                      Loads local files instantly. You can select & upload multiple JSONs at once!
                     </p>
                   </div>
                 </div>
@@ -1170,7 +1377,7 @@ export default function ChapterLibraryTab({
                     {importError && (
                       <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] rounded-xl flex items-center gap-1.5">
                         <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                        <span>{importError}</span>
+                        <span className="whitespace-pre-line">{importError}</span>
                       </div>
                     )}
                   </div>
@@ -1178,19 +1385,35 @@ export default function ChapterLibraryTab({
                   <div className="space-y-1.5">
                     <div className="flex justify-between items-center">
                       <label className="block text-xs font-bold uppercase tracking-wider text-[var(--t3)]">Sample Template Blueprint</label>
-                      <button
-                        onClick={() => {
-                          setPastedJson(SAMPLE_IMPORT_JSON);
-                          setImportError('');
-                        }}
-                        className="text-[10px] text-[var(--gd)] hover:underline font-bold"
-                      >
-                        Use Sample JSON
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(SAMPLE_IMPORT_JSON);
+                            setCopiedJson(true);
+                            setTimeout(() => setCopiedJson(false), 2000);
+                          }}
+                          className="text-[10px] text-emerald-400 hover:underline font-bold flex items-center gap-1"
+                        >
+                          <Copy className="w-3 h-3" />
+                          {copiedJson ? 'Copied!' : 'Copy Schema'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPastedJson(SAMPLE_IMPORT_JSON);
+                            setImportError('');
+                          }}
+                          className="text-[10px] text-[var(--gd)] hover:underline font-bold"
+                        >
+                          Use Sample JSON
+                        </button>
+                      </div>
                     </div>
-                    <pre className="bg-[var(--ra)] text-[var(--gd)] p-3 rounded-2xl text-[10px] overflow-auto h-48 font-mono select-all text-left border border-[var(--bd)]">
+                    <pre className="bg-[var(--ra)] text-[var(--gd)] p-3 rounded-2xl text-[10px] overflow-auto h-40 font-mono select-all text-left border border-[var(--bd)]">
                       {SAMPLE_IMPORT_JSON}
                     </pre>
+                    <p className="text-[9px] text-[var(--t3)] leading-snug">
+                      * Supports auto-populating sub-sections: read, lesson slides, core concepts, flashcards, mains evaluations, socratic discussions, Feynman prompts, current affairs angles, on-the-fly MCQs, and authentic UPSC PYQs.
+                    </p>
                   </div>
                 </div>
 
@@ -1212,74 +1435,86 @@ export default function ChapterLibraryTab({
               </div>
             ) : (
               <div className="p-5 space-y-4">
-                <div className="bg-[var(--ra)] border border-[var(--bd)] rounded-2xl p-4 space-y-2.5">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-[10px] uppercase tracking-widest font-bold text-[var(--gd)] font-mono">Parsed Chapter</span>
-                      <h4 className="font-serif font-bold text-base text-[var(--t1)]">
-                        {parsedImportData?.title || parsedImportData?.metadata?.chapter_title || "Untitled Chapter"}
-                      </h4>
-                    </div>
-                    <span className="text-xs bg-[var(--sur)] text-[var(--t2)] border border-[var(--bd)] px-2.5 py-1 rounded-xl font-mono">
-                      {parsedImportData?.topics?.length || parsedImportData?.sections?.length || 0} Topics
-                    </span>
-                  </div>
-                  {parsedImportData?.source && (
-                    <p className="text-xs text-[var(--t2)] font-mono">
-                      Reference Source: <span className="text-[var(--t1)]">{parsedImportData.source}</span>
-                    </p>
-                  )}
-                  {parsedImportData?.description && (
-                    <p className="text-xs text-[var(--t3)] font-serif italic line-clamp-3">
-                      "{parsedImportData.description}"
-                    </p>
-                  )}
+                <div className="flex flex-col gap-1 border-b border-[var(--bd)]/50 pb-2.5">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-[var(--t1)]">Review & Allocate Cabinet Folders</h4>
+                  <p className="text-xs text-[var(--t3)] font-serif leading-relaxed">
+                    Confirm target shelves for each imported material. You can adjust cabinet selections or exclude files before continuing.
+                  </p>
                 </div>
 
-                <div className="space-y-3.5">
-                  <div className="flex flex-col gap-1">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--t1)]">Where should this chapter go?</h4>
-                    <p className="text-[11px] text-[var(--t3)] font-serif leading-relaxed">
-                      We have analyzed the syllabus metadata, keywords, and topics.
-                    </p>
-                  </div>
-
-                  {showUnsureWarning ? (
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-2xl text-[11px] flex gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-                      <div className="space-y-1">
-                        <p className="font-bold">Unsure Allocation Warning</p>
-                        <p className="font-serif leading-relaxed">
-                          We scanned the metadata but couldn't confidently pinpoint the exact target cabinet. Please verify or manually select the correct shelf cabinet folder below.
-                        </p>
+                <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+                  {pendingImports.map((p, index) => {
+                    const parsed = p.parsedData;
+                    const title = parsed?.title || parsed?.metadata?.chapter_title || parsed?.chapter_title || "Untitled Chapter";
+                    const topicCount = parsed?.topics?.length || parsed?.sections?.length || 0;
+                    
+                    return (
+                      <div key={p.id} className="bg-[var(--ra)]/65 border border-[var(--bd)] rounded-2xl p-4 space-y-3 relative">
+                        <div className="flex justify-between items-start gap-4">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[9px] uppercase tracking-wider font-mono text-[var(--gd)] font-bold">
+                              Material #{index + 1}: {p.fileName}
+                            </span>
+                            <h4 className="font-serif font-bold text-sm text-[var(--t1)] truncate mt-0.5">
+                              {title}
+                            </h4>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] bg-[var(--sur)] text-[var(--t2)] border border-[var(--bd)] px-2 py-0.5 rounded-lg font-mono">
+                              {topicCount} Topics
+                            </span>
+                            {pendingImports.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setPendingImports(pendingImports.filter(item => item.id !== p.id))}
+                                className="p-1.5 text-[var(--t3)] hover:text-red-500 hover:bg-red-500/10 rounded-xl transition cursor-pointer"
+                                title="Exclude from batch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-[var(--t3)] mb-1">
+                              Target Study Cabinet
+                            </label>
+                            <select
+                              className="w-full bg-[var(--sur)] text-[var(--t1)] border border-[var(--bd)] rounded-xl p-2 text-xs font-sans focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
+                              value={p.targetFolderId}
+                              onChange={(e) => {
+                                const updated = pendingImports.map(item => 
+                                  item.id === p.id ? { ...item, targetFolderId: e.target.value } : item
+                                );
+                                setPendingImports(updated);
+                              }}
+                            >
+                              {folders.map(f => (
+                                <option key={f.id} value={f.id}>
+                                  Cabinet: {f.name} ({f.subject})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex items-end">
+                            {p.unsure ? (
+                              <div className="w-full p-2 bg-amber-500/5 border border-amber-500/10 text-amber-500 rounded-xl text-[10px] flex gap-1.5 items-center">
+                                <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                <span className="truncate">Unsure match - verify cabinet</span>
+                              </div>
+                            ) : (
+                              <div className="w-full p-2 bg-emerald-500/5 border border-emerald-500/10 text-emerald-400 rounded-xl text-[10px] flex gap-1.5 items-center">
+                                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span className="truncate">Confident cabinet match</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-2xl text-[11px] flex gap-2">
-                      <Check className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
-                      <div className="space-y-1">
-                        <p className="font-bold">Confident Cabinet Match Found!</p>
-                        <p className="font-serif leading-relaxed">
-                          Our smart metadata analysis has automatically recommended the closest default cabinet below.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-[var(--t2)] mb-1.5">Target Study Cabinet Folder</label>
-                    <select
-                      className="w-full bg-[var(--ra)] text-[var(--t1)] border border-[var(--bd)] rounded-xl p-3 text-sm font-sans focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
-                      value={targetFolderIdForImport}
-                      onChange={(e) => setTargetFolderIdForImport(e.target.value)}
-                    >
-                      {folders.map(f => (
-                        <option key={f.id} value={f.id}>
-                          Cabinet: {f.name} ({f.subject})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                    );
+                  })}
                 </div>
 
                 {importError && (
@@ -1304,7 +1539,7 @@ export default function ChapterLibraryTab({
                     className="bg-[var(--gd)] text-[var(--bg)] px-5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider shadow-md hover:opacity-90 transition flex items-center gap-1.5"
                   >
                     <Check className="w-4 h-4" />
-                    Confirm & Import
+                    Confirm & Import All ({pendingImports.length})
                   </button>
                 </div>
               </div>

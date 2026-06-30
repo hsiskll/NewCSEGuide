@@ -3,15 +3,17 @@ import {
   Check, X, HelpCircle, Layers, RefreshCw, Plus, 
   Trash2, AlertCircle, Bookmark, Sparkles, Trophy, Upload, Copy
 } from 'lucide-react';
-import { Flashcard, SubjectType } from '../types';
+import { Flashcard, SubjectType, Chapter } from '../types';
 import { callGemini } from '../utils/gemini';
 
 interface LeitnerRevisionTabProps {
   flashcards: Flashcard[];
+  chapters?: Chapter[];
   onUpdateFlashcard: (card: Flashcard) => void;
   onAddFlashcard: (card: Omit<Flashcard, 'id' | 'createdAt' | 'streak'>) => void;
   onDeleteFlashcard: (id: string) => void;
   planner?: Record<string, any>;
+  completedChapters?: Record<string, string>;
 }
 
 const BOX_DETAILS = [
@@ -24,14 +26,74 @@ const BOX_DETAILS = [
 
 export default function LeitnerRevisionTab({
   flashcards,
+  chapters = [],
   onUpdateFlashcard,
   onAddFlashcard,
   onDeleteFlashcard,
-  planner = {}
+  planner = {},
+  completedChapters = {}
 }: LeitnerRevisionTabProps) {
   const [isFlipped, setIsFlipped] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addMode, setAddMode] = useState<'manual' | 'ai' | 'json'>('manual');
+  const [studyMode, setStudyMode] = useState<'scheduled' | 'all'>('scheduled');
+  
+  // State for organized collapsible directory structure
+  const [expandedSubjs, setExpandedSubjs] = useState<Record<string, boolean>>({});
+  const [expandedChaps, setExpandedChaps] = useState<Record<string, boolean>>({});
+  const [expandedSecs, setExpandedSecs] = useState<Record<string, boolean>>({});
+
+  const toggleSubj = (subj: string) => {
+    setExpandedSubjs(prev => ({ ...prev, [subj]: !prev[subj] }));
+  };
+
+  const toggleChap = (chapKey: string) => {
+    setExpandedChaps(prev => ({ ...prev, [chapKey]: !prev[chapKey] }));
+  };
+
+  const toggleSec = (secKey: string) => {
+    setExpandedSecs(prev => ({ ...prev, [secKey]: !prev[secKey] }));
+  };
+
+  const organizedFlashcards = React.useMemo(() => {
+    const tree: Record<string, Record<string, Record<string, Flashcard[]>>> = {};
+
+    flashcards.forEach(card => {
+      // 1. Normalize Subject
+      let subj = card.subject || 'General';
+      subj = subj.charAt(0).toUpperCase() + subj.slice(1).toLowerCase();
+      if (subj === 'Science & tech') subj = 'Science & Tech';
+
+      // 2. Identify Chapter Title
+      let chapTitle = card.chapterTitle || 'General / Direct Flashcards';
+      if (card.chapterId && chapters) {
+        const chap = chapters.find(c => c.id === card.chapterId);
+        if (chap) {
+          chapTitle = chap.title;
+        }
+      }
+
+      // 3. Identify Topic/Section Title
+      let secTitle = card.topicTitle || 'General Recall';
+      if (card.topicId && card.chapterId && chapters) {
+        const chap = chapters.find(c => c.id === card.chapterId);
+        if (chap) {
+          const top = chap.topics?.find(t => t.id === card.topicId);
+          if (top) {
+            secTitle = top.title;
+          }
+        }
+      }
+
+      if (!tree[subj]) tree[subj] = {};
+      if (!tree[subj][chapTitle]) tree[subj][chapTitle] = {};
+      if (!tree[subj][chapTitle][secTitle]) tree[subj][chapTitle][secTitle] = [];
+
+      tree[subj][chapTitle][secTitle].push(card);
+    });
+
+    return tree;
+  }, [flashcards, chapters]);
   
   // Manual card inputs
   const [newFront, setNewFront] = useState('');
@@ -54,42 +116,48 @@ export default function LeitnerRevisionTab({
   const completedChaptersForLeitner = React.useMemo(() => {
     const completedIds = new Set<string>();
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    Object.entries(planner).forEach(([dateStr, dayPlanner]) => {
-      const parts = dateStr.split('-');
-      if (parts.length !== 3) return;
-      const compDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    if (completedChapters) {
+      Object.entries(completedChapters).forEach(([chapterId, dateStr]) => {
+        const parts = dateStr.split('-');
+        if (parts.length !== 3) return;
+        const compDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        compDate.setHours(0, 0, 0, 0);
 
-      // T+2 threshold: must be at least 2 days ago
-      const tPlusTwo = new Date(compDate);
-      tPlusTwo.setDate(tPlusTwo.getDate() + 2);
+        // D+2 threshold: must be at least 2 days after completion
+        const dPlusTwo = new Date(compDate);
+        dPlusTwo.setDate(dPlusTwo.getDate() + 2);
 
-      if (tPlusTwo <= today) {
-        if (dayPlanner && Array.isArray(dayPlanner.targets)) {
-          dayPlanner.targets.forEach((t: any) => {
-            if (t.chapterId && t.completed) {
-              completedIds.add(t.chapterId);
-            }
-          });
+        if (dPlusTwo <= today) {
+          completedIds.add(chapterId);
         }
-      }
-    });
+      });
+    }
     return completedIds;
-  }, [planner]);
+  }, [completedChapters]);
 
   // Filter due cards
   const now = new Date();
-  const dueQueue = flashcards.filter(card => {
-    // If card belongs to a chapter, check if that chapter was completed in planner >= 2 days ago
-    if (card.chapterId) {
-      if (!completedChaptersForLeitner.has(card.chapterId)) {
-        return false; // Not due/active yet because chapter was not completed >= 2 days ago
-      }
+  const dueQueue = React.useMemo(() => {
+    if (studyMode === 'all') {
+      // Free Study Mode: return all cards sorted by box number ascending, so they start from Box 1
+      return [...flashcards].sort((a, b) => a.box - b.box);
     }
 
-    const rDate = new Date(card.nextReviewDate);
-    return rDate <= now;
-  });
+    // Standard Scheduled Mode (respects D+2 completed chapters & scheduled nextReviewDate)
+    return flashcards.filter(card => {
+      // If card belongs to a chapter, check if that chapter was completed in planner >= 2 days ago
+      if (card.chapterId) {
+        if (!completedChaptersForLeitner.has(card.chapterId)) {
+          return false; // Not due/active yet because chapter was not completed >= 2 days ago
+        }
+      }
+
+      const rDate = new Date(card.nextReviewDate);
+      return rDate <= now;
+    });
+  }, [flashcards, studyMode, completedChaptersForLeitner]);
 
   const activeCard = dueQueue[0] || null;
 
@@ -225,7 +293,7 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
     if (fileArray.length === 0) return;
 
     let filesRead = 0;
-    const allImportedCards: Array<{ front: string; back: string; subject?: string }> = [];
+    const allImportedCards: Array<{ front: string; back: string; subject?: string; chapterTitle?: string; topicTitle?: string }> = [];
 
     fileArray.forEach(file => {
       const reader = new FileReader();
@@ -249,8 +317,10 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
             const front = c.front || c.question || c.q || "";
             const back = c.back || c.answer || c.a || c.solution || "";
             const subject = c.subject || c.category || "General";
+            const chapterTitle = c.chapterTitle || c.chapter_title || c.chapter || "";
+            const topicTitle = c.topicTitle || c.topic_title || c.topic || c.sectionTitle || c.section_title || c.section || "";
             if (front && back) {
-              allImportedCards.push({ front, back, subject });
+              allImportedCards.push({ front, back, subject, chapterTitle, topicTitle });
             }
           });
 
@@ -262,6 +332,8 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
                   front: c.front,
                   back: c.back,
                   subject: (c.subject || 'General') as SubjectType,
+                  chapterTitle: c.chapterTitle,
+                  topicTitle: c.topicTitle,
                   box: 1,
                   nextReviewDate: new Date().toISOString()
                 });
@@ -302,11 +374,15 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
         const front = c.front || c.question || c.q || "";
         const back = c.back || c.answer || c.a || c.solution || "";
         const subject = c.subject || c.category || "General";
+        const chapterTitle = c.chapterTitle || c.chapter_title || c.chapter || "";
+        const topicTitle = c.topicTitle || c.topic_title || c.topic || c.sectionTitle || c.section_title || c.section || "";
         if (front && back) {
           onAddFlashcard({
             front,
             back,
             subject: (subject || 'General') as SubjectType,
+            chapterTitle,
+            topicTitle,
             box: 1,
             nextReviewDate: new Date().toISOString()
           });
@@ -621,14 +697,46 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
         
         {/* Memory Deck Recall Box */}
         <div className="lg:col-span-2 bg-white rounded-lg border border-brand-navy/10 overflow-hidden shadow-sm flex flex-col justify-between min-h-[350px]">
-          <div className="bg-brand-navy text-white px-4 py-3.5 border-b-2 border-brand-gold flex justify-between items-center">
+          <div className="bg-brand-navy text-white px-4 py-3.5 border-b-2 border-brand-gold flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Layers className="w-5 h-5 text-brand-gold" />
-              <h3 className="font-display font-bold text-sm text-white uppercase tracking-wider">Scheduled Active Recall Deck</h3>
+              <h3 className="font-display font-bold text-sm text-white uppercase tracking-wider">
+                {studyMode === 'scheduled' ? 'Scheduled Active Recall Deck' : 'Unlimited Free Study Deck'}
+              </h3>
             </div>
             <span className="text-[10px] bg-brand-slate text-brand-gold border border-brand-gold/30 px-2.5 py-1 rounded font-mono">
               Due Queue: {dueQueue.length}
             </span>
+          </div>
+
+          {/* Mode Selector Tabs */}
+          <div className="bg-brand-cream/50 border-b border-brand-navy/5 p-2 flex gap-1.5">
+            <button
+              onClick={() => {
+                setStudyMode('scheduled');
+                setIsFlipped(false);
+              }}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                studyMode === 'scheduled'
+                  ? 'bg-brand-navy text-brand-gold border border-brand-gold/30 shadow-xs'
+                  : 'bg-transparent text-brand-slate hover:bg-brand-navy/5'
+              }`}
+            >
+              📅 Scheduled (D+2 & Intervals)
+            </button>
+            <button
+              onClick={() => {
+                setStudyMode('all');
+                setIsFlipped(false);
+              }}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                studyMode === 'all'
+                  ? 'bg-brand-navy text-brand-gold border border-brand-gold/30 shadow-xs'
+                  : 'bg-transparent text-brand-slate hover:bg-brand-navy/5'
+              }`}
+            >
+              ⚡ Free Study (Any Card, Any Time)
+            </button>
           </div>
 
           {activeCard ? (
@@ -682,7 +790,7 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
                 {!isFlipped ? (
                   <button
                     onClick={() => setIsFlipped(true)}
-                    className="col-span-2 bg-brand-navy hover:bg-brand-slate text-brand-gold border border-brand-gold py-3 rounded text-xs font-bold uppercase tracking-wider transition shadow-sm"
+                    className="col-span-2 bg-brand-navy hover:bg-brand-slate text-brand-gold border border-brand-gold py-3 rounded text-xs font-bold uppercase tracking-wider transition shadow-sm cursor-pointer"
                   >
                     Flip and Reveal Fact
                   </button>
@@ -690,14 +798,14 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
                   <>
                     <button
                       onClick={handleDemote}
-                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 py-3 rounded text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-1.5"
+                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 py-3 rounded text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <X className="w-4 h-4" />
                       Failed Recall
                     </button>
                     <button
                       onClick={handlePromote}
-                      className="bg-green-50 hover:bg-green-100 text-green-700 border border-green-300 py-3 rounded text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-1.5"
+                      className="bg-green-50 hover:bg-green-100 text-green-700 border border-green-300 py-3 rounded text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Check className="w-4 h-4" />
                       Perfect Recall
@@ -718,6 +826,12 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
                   Congratulations. Your memory cards are completely up to date for all five Leitner boxes. 
                 </p>
               </div>
+              <button
+                onClick={() => setStudyMode('all')}
+                className="bg-brand-navy text-brand-gold border border-brand-gold px-4 py-2 rounded-xl text-xs font-bold uppercase hover:bg-brand-slate transition mt-2 cursor-pointer"
+              >
+                Switch to Free Study Mode & Keep Practicing
+              </button>
               <p className="text-[11px] text-gray-400 italic">
                 Pro-Tip: Visit the <strong>Chapter Reader</strong> and use the AI Drawer "Flashcard Maker" to populate more active recall items dynamically.
               </p>
@@ -729,7 +843,7 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
         <div className="bg-white rounded-lg border border-brand-navy/10 p-5 shadow-sm space-y-4 flex flex-col justify-between">
           <div>
             <h3 className="font-display font-bold text-xs uppercase tracking-wider text-brand-navy border-b border-brand-navy/10 pb-1.5 mb-3">
-              Total Flashcards Library ({flashcards.length})
+              Leitner Deck Directory ({flashcards.length})
             </h3>
 
             {flashcards.length === 0 ? (
@@ -737,30 +851,148 @@ Do not include any markdown backticks, explanations, or extra text. Return raw J
                 Your flashcard deck is empty. Create some manually above or generate them via AI inside the reader!
               </div>
             ) : (
-              <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-                {flashcards.map(card => (
-                  <div key={card.id} className="p-2.5 bg-brand-cream border border-brand-navy/5 rounded flex items-start justify-between gap-3 text-left">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[8px] font-mono font-bold bg-brand-navy text-brand-gold px-1 rounded uppercase shrink-0">
-                          {card.subject}
-                        </span>
-                        <span className="text-[8px] font-mono font-bold bg-brand-slate text-brand-teal px-1 rounded shrink-0">
-                          Box {card.box}
-                        </span>
-                      </div>
-                      <p className="text-xs font-bold text-brand-navy line-clamp-1">{card.front}</p>
-                      <p className="text-[10px] text-gray-500 font-serif italic line-clamp-1">{card.back}</p>
-                    </div>
+              <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                {Object.keys(organizedFlashcards).map(subj => {
+                  const subTree = organizedFlashcards[subj];
+                  const isSubjExpanded = !!expandedSubjs[subj];
+                  
+                  // Count total cards in this subject
+                  let subjCardCount = 0;
+                  Object.values(subTree).forEach((ch: any) => {
+                    Object.values(ch).forEach((sec: any) => {
+                      subjCardCount += sec.length;
+                    });
+                  });
 
-                    <button
-                      onClick={() => onDeleteFlashcard(card.id)}
-                      className="text-red-700 hover:bg-red-50 p-1.5 rounded transition shrink-0 border border-transparent hover:border-red-100"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+                  return (
+                    <div key={subj} className="border border-brand-navy/5 rounded-lg overflow-hidden">
+                      {/* Subject Header */}
+                      <button
+                        onClick={() => toggleSubj(subj)}
+                        className="w-full text-left p-2.5 bg-brand-cream/80 hover:bg-brand-cream flex items-center justify-between text-xs font-bold text-brand-navy transition"
+                      >
+                        <span className="flex items-center gap-1.5 font-sans">
+                          <span className="text-[14px]">📁</span>
+                          {subj}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono bg-brand-navy text-brand-gold px-1.5 py-0.5 rounded-full font-bold">
+                            {subjCardCount} Cards
+                          </span>
+                          <span className="text-[10px] text-gray-400">
+                            {isSubjExpanded ? '▼' : '▶'}
+                          </span>
+                        </span>
+                      </button>
+
+                      {/* Subject Content */}
+                      {isSubjExpanded && (
+                        <div className="pl-3 pr-2 py-2 bg-white space-y-2 border-t border-brand-navy/5">
+                          {Object.keys(subTree).map(chapTitle => {
+                            const chapTree = subTree[chapTitle];
+                            const chapKey = `${subj}::${chapTitle}`;
+                            const isChapExpanded = !!expandedChaps[chapKey];
+
+                            // Count total cards in this chapter
+                            let chapCardCount = 0;
+                            Object.values(chapTree).forEach((sec: any) => {
+                              chapCardCount += sec.length;
+                            });
+
+                            return (
+                              <div key={chapTitle} className="border border-brand-navy/5 rounded">
+                                {/* Chapter Header */}
+                                <button
+                                  onClick={() => toggleChap(chapKey)}
+                                  className="w-full text-left p-2 bg-gray-50 hover:bg-gray-100 flex items-center justify-between text-[11px] font-semibold text-brand-slate transition"
+                                >
+                                  <span className="flex items-center gap-1.5 font-sans truncate pr-4">
+                                    <span className="text-[12px]">📖</span>
+                                    <span className="truncate">{chapTitle}</span>
+                                  </span>
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[9px] font-mono bg-brand-slate text-brand-teal px-1 rounded font-bold">
+                                      {chapCardCount}
+                                    </span>
+                                    <span className="text-[9px] text-gray-400">
+                                      {isChapExpanded ? '▼' : '▶'}
+                                    </span>
+                                  </span>
+                                </button>
+
+                                {/* Chapter Content */}
+                                {isChapExpanded && (
+                                  <div className="pl-3 pr-1 py-1.5 space-y-1.5 bg-white border-t border-brand-navy/5">
+                                    {Object.keys(chapTree).map(secTitle => {
+                                      const secCards = chapTree[secTitle];
+                                      const secKey = `${subj}::${chapTitle}::${secTitle}`;
+                                      const isSecExpanded = !!expandedSecs[secKey];
+
+                                      return (
+                                        <div key={secTitle} className="space-y-1">
+                                          {/* Section Header */}
+                                          <button
+                                            onClick={() => toggleSec(secKey)}
+                                            className="w-full text-left py-1 px-1.5 rounded hover:bg-gray-50 flex items-center justify-between text-[10px] text-gray-600 font-medium transition"
+                                          >
+                                            <span className="flex items-center gap-1 font-sans truncate pr-4">
+                                              <span className="text-[10px]">📑</span>
+                                              <span className="truncate">{secTitle}</span>
+                                            </span>
+                                            <span className="flex items-center gap-1 shrink-0">
+                                              <span className="text-[9px] font-mono text-gray-400 font-bold">
+                                                ({secCards.length})
+                                              </span>
+                                              <span className="text-[8px] text-gray-400">
+                                                {isSecExpanded ? '▼' : '▶'}
+                                              </span>
+                                            </span>
+                                          </button>
+
+                                          {/* Section Cards */}
+                                          {isSecExpanded && (
+                                            <div className="pl-3.5 pr-0.5 py-1 space-y-1.5 border-l border-brand-navy/5">
+                                              {secCards.map(card => (
+                                                <div key={card.id} className="p-2 bg-brand-cream/45 border border-brand-navy/5 rounded flex items-start justify-between gap-2 text-left animate-fade-in">
+                                                  <div className="min-w-0 flex-1 space-y-0.5">
+                                                    <div className="flex items-center gap-1">
+                                                      <span className="text-[8px] font-mono font-bold bg-brand-slate text-brand-teal px-1 rounded shrink-0">
+                                                        Box {card.box}
+                                                      </span>
+                                                      {card.streak > 0 && (
+                                                        <span className="text-[8px] font-mono text-brand-gold shrink-0">
+                                                          🔥 {card.streak}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <p className="text-[11px] font-bold text-brand-navy leading-snug">{card.front}</p>
+                                                    <p className="text-[10px] text-gray-500 font-serif italic leading-relaxed line-clamp-2">{card.back}</p>
+                                                  </div>
+
+                                                  <button
+                                                    onClick={() => onDeleteFlashcard(card.id)}
+                                                    className="text-red-700 hover:bg-red-50 p-1 rounded transition shrink-0 border border-transparent hover:border-red-100 animate-pulse"
+                                                    title="Delete recall card"
+                                                  >
+                                                    <Trash2 className="w-3 h-3" />
+                                                  </button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
