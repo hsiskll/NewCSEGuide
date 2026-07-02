@@ -17,13 +17,31 @@ export function renderFormattedMarkdown(text: string | undefined): React.ReactNo
   let listKey = 0;
 
   const parseInlineStyles = (lineText: string) => {
-    const parts = lineText.split(/(\*\*.*?\*\*|`.*?`)/g);
+    const parts = lineText.split(/(\*\*.*?\*\*|`.*?`|\[.*?\]\(.*?\))/g);
     return parts.map((part, index) => {
       if (part.startsWith('**') && part.endsWith('**')) {
         return <strong key={index} className="font-extrabold text-[var(--t1)]">{part.slice(2, -2)}</strong>;
       }
       if (part.startsWith('`') && part.endsWith('`')) {
         return <code key={index} className="px-1.5 py-0.5 bg-[var(--ra)] text-[var(--gd)] font-mono text-[10px] rounded border border-[var(--bd)]">{part.slice(1, -1)}</code>;
+      }
+      if (part.startsWith('[') && part.includes('](') && part.endsWith(')')) {
+        const match = part.match(/\[(.*?)\]\((.*?)\)/);
+        if (match) {
+          const linkText = match[1];
+          const linkUrl = match[2];
+          return (
+            <a 
+              key={index} 
+              href={linkUrl} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-[var(--gd)] hover:text-[var(--gd2)] underline font-medium transition-colors"
+            >
+              {linkText}
+            </a>
+          );
+        }
       }
       return part;
     });

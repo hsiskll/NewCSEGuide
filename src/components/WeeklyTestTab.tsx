@@ -895,10 +895,10 @@ export default function WeeklyTestTab({ state, onUpdateState, onNavigateToChapte
 
                 if (isInstantFeedback && hasValidated) {
                   if (isCorrect) {
-                    optionStyle = "border-emerald-500 bg-emerald-500/10 text-emerald-600 font-bold";
+                    optionStyle = "border-emerald-500 bg-emerald-500/10 text-[var(--ok)] font-bold";
                     icon = <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
                   } else if (isSelected) {
-                    optionStyle = "border-red-500 bg-red-500/10 text-red-600 font-bold";
+                    optionStyle = "border-red-500 bg-red-500/10 text-[var(--er)] font-bold";
                     icon = <XCircle className="w-4 h-4 text-red-500" />;
                   }
                 }

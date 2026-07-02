@@ -2168,7 +2168,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                             const isSelected = selected === optionChar;
                             const isCorrect = optionChar === q.answer;
                             
-                            let borderClass = "border-[var(--bd)] hover:bg-[var(--ra)]";
+                            let borderClass = "border-[var(--bd)] hover:bg-[var(--ra)] text-[var(--t1)]";
                             let icon = null;
                             if (selected) {
                               if (isCorrect) {
@@ -2236,7 +2236,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                             const isSelected = selected === optionChar;
                             const isCorrect = optionChar === q.answer;
                             
-                            let borderClass = "border-[var(--bd)] hover:bg-[var(--ra)]";
+                            let borderClass = "border-[var(--bd)] hover:bg-[var(--ra)] text-[var(--t1)]";
                             let icon = null;
                             if (selected) {
                               if (isCorrect) {
@@ -2328,7 +2328,7 @@ An image or PDF containing the handwritten answer draft is attached to this requ
                             const isSelected = selected === optChar;
                             const isCorrect = optChar === q.answer;
 
-                            let optionStyle = "border-[var(--bd)] hover:bg-[var(--ra)]";
+                            let optionStyle = "border-[var(--bd)] hover:bg-[var(--ra)] text-[var(--t1)]";
                             let checkIcon = null;
                             if (selected) {
                               if (isCorrect) {

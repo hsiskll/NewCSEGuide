@@ -122,12 +122,8 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
       needsUpdate = true;
     }
 
-    if (currentGoals.length === 0) {
-      updatedGoals = [
-        { id: 'g1', text: 'Complete GS-II Polity Syllabus before July 15', completed: false, createdAt: new Date().toISOString() },
-        { id: 'g2', text: 'Achieve a 10-day Leitner revision streak', completed: false, createdAt: new Date().toISOString() },
-        { id: 'g3', text: 'Practice 50 MCQs daily to build retention', completed: false, createdAt: new Date().toISOString() }
-      ];
+    if (!state.personalGoals) {
+      updatedGoals = [];
       needsUpdate = true;
     }
 
@@ -796,6 +792,72 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
               <CalendarDays className="w-4 h-4 text-[var(--gd)] shrink-0 mt-0.5" />
               <span>Select any date from the planner calendar to log daily study quotas, schedule Leitner revisions or write targets. June 25th contains your current targets!</span>
             </div>
+
+            {/* Personal Long-Term Goals List */}
+            <div className="space-y-2 bg-[var(--sur)] p-3 rounded-xl border border-[var(--bd)] text-left">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-[var(--t1)]">Scholar's Personal Milestones</span>
+                <span className="text-[9px] uppercase font-mono font-bold text-[var(--t3)]">
+                  {personalGoals.filter(g => g.completed).length} / {personalGoals.length} done
+                </span>
+              </div>
+
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {personalGoals.length === 0 ? (
+                  <p className="text-[10px] text-[var(--t3)] italic text-center py-2">No personal goals logged yet.</p>
+                ) : (
+                  personalGoals.map(goal => (
+                    <div key={goal.id} className="flex items-center justify-between py-1 border-b border-[var(--bd)]/30 group last:border-0">
+                      <button
+                        onClick={() => handleTogglePersonalGoal(goal.id)}
+                        className="flex items-center gap-2 flex-1 text-left cursor-pointer"
+                      >
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                          goal.completed ? 'bg-[var(--gd)] border-[var(--gd)] text-[var(--bg)]' : 'border-[var(--bd)]'
+                        }`}>
+                          {goal.completed && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                        <span className={`text-[11px] leading-tight ${goal.completed ? 'line-through text-[var(--t3)]' : 'text-[var(--t2)]'}`}>
+                          {goal.text}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => handleDeletePersonalGoal(goal.id)}
+                        className="text-[var(--t3)] hover:text-red-500 opacity-60 hover:opacity-100 transition p-0.5 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Add goal input */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (newPersonalGoalText.trim()) {
+                    handleAddPersonalGoal(newPersonalGoalText);
+                    setNewPersonalGoalText('');
+                  }
+                }}
+                className="flex gap-2 mt-1"
+              >
+                <input
+                  type="text"
+                  placeholder="Define milestone (e.g. Laxmikanth revision)..."
+                  value={newPersonalGoalText}
+                  onChange={(e) => setNewPersonalGoalText(e.target.value)}
+                  className="flex-1 bg-[var(--ra)] text-[10px] text-[var(--t1)] border border-[var(--bd)]/80 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
+                />
+                <button
+                  type="submit"
+                  className="bg-[var(--gd)] hover:opacity-90 text-[var(--bg)] px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase transition cursor-pointer shrink-0"
+                >
+                  Add
+                </button>
+              </form>
+            </div>
           </div>
 
           {/* RIGHT PANEL: SELECTED DAY DETAILS, CHECKLIST, LEITNER AND GOALS */}
@@ -860,7 +922,7 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
                         </button>
                         <button
                           onClick={() => handleDeleteTask(selectedDateStr, task.id)}
-                          className="text-[var(--t3)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1 cursor-pointer"
+                          className="text-[var(--t3)] hover:text-red-500 opacity-60 hover:opacity-100 transition p-1 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -996,7 +1058,7 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-amber-500" />
-                    <span className="text-xs font-bold text-[var(--t1)]">Leitner Flashcard Revision Tracker</span>
+                    <span className="text-xs font-bold text-[var(--t1)]">Leitner Spaced Revision Tracker</span>
                   </div>
                   <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-500">
                     <Trophy className="w-3 h-3 fill-amber-500" />
@@ -1024,72 +1086,6 @@ export default function DashboardTab({ state, onNavigateToChapter, onNavigateToL
                     }
                   </span>
                 </button>
-              </div>
-
-              {/* Personal Long-Term Goals List */}
-              <div className="space-y-2 bg-[var(--sur)] p-3 rounded-xl border border-[var(--bd)] text-left">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-[var(--t1)]">Scholar's Personal Milestones</span>
-                  <span className="text-[9px] uppercase font-mono font-bold text-[var(--t3)]">
-                    {personalGoals.filter(g => g.completed).length} / {personalGoals.length} done
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                  {personalGoals.length === 0 ? (
-                    <p className="text-[10px] text-[var(--t3)] italic text-center py-2">No personal goals logged yet.</p>
-                  ) : (
-                    personalGoals.map(goal => (
-                      <div key={goal.id} className="flex items-center justify-between py-1 border-b border-[var(--bd)]/30 group last:border-0">
-                        <button
-                          onClick={() => handleTogglePersonalGoal(goal.id)}
-                          className="flex items-center gap-2 flex-1 text-left cursor-pointer"
-                        >
-                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                            goal.completed ? 'bg-[var(--gd)] border-[var(--gd)] text-[var(--bg)]' : 'border-[var(--bd)]'
-                          }`}>
-                            {goal.completed && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                          </div>
-                          <span className={`text-[11px] leading-tight ${goal.completed ? 'line-through text-[var(--t3)]' : 'text-[var(--t2)]'}`}>
-                            {goal.text}
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => handleDeletePersonalGoal(goal.id)}
-                          className="text-[var(--t3)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-0.5 cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {/* Add goal input */}
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (newPersonalGoalText.trim()) {
-                      handleAddPersonalGoal(newPersonalGoalText);
-                      setNewPersonalGoalText('');
-                    }
-                  }}
-                  className="flex gap-2 mt-1"
-                >
-                  <input
-                    type="text"
-                    placeholder="Define milestone (e.g. Laxmikanth revision)..."
-                    value={newPersonalGoalText}
-                    onChange={(e) => setNewPersonalGoalText(e.target.value)}
-                    className="flex-1 bg-[var(--ra)] text-[10px] text-[var(--t1)] border border-[var(--bd)]/80 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[var(--gd)]"
-                  />
-                  <button
-                    type="submit"
-                    className="bg-[var(--gd)] hover:opacity-90 text-[var(--bg)] px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase transition cursor-pointer shrink-0"
-                  >
-                    Add
-                  </button>
-                </form>
               </div>
             </div>
           </div>
